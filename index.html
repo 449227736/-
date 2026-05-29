@@ -1073,12 +1073,11 @@ async function doExportTemplate(recs){
     });
   }
 
-  /* 5. Write data rows (start from TPL_ROW+1 to avoid overwriting template row 3) */
-  var DATA_START = TPL_ROW + 1;
+  /* 5. Write data rows (start from TPL_ROW, clear template style first) */
   var imgQueue=[];
   for(var i=0;i<recs.length;i++){
     var r=recs[i];
-    var rn=DATA_START+i;
+    var rn=TPL_ROW+i;
     var row=ws.getRow(rn);
     row.height=60;
 
