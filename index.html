@@ -1067,9 +1067,9 @@ async function doExportTemplate(recs){
   /* 4. Clear all data rows (keep title+header) */
   for(var dr=TPL_ROW;dr<=ws.rowCount;dr++){
     var row=ws.getRow(dr);
+    row.fill=undefined;
     row.eachCell({includeEmpty:true},function(cell,colNum){
       cell.value=null;
-      cell.fill={type:'pattern',pattern:'none'};
     });
   }
 
@@ -1091,8 +1091,7 @@ async function doExportTemplate(recs){
       var cell=ws.getCell(rn,c+1);
       var style=tplStyles[c];
       cell.font=style.font;
-      /* 不复制模板的 fill，避免模板底色干扰 */
-      cell.fill={type:'pattern',pattern:'none'};
+      /* 不要复制模板的 fill，彻底避免模板底色干扰 */
       cell.alignment=style.alignment;
       cell.border=style.border;
       if(style.numFmt)cell.numFmt=style.numFmt;
