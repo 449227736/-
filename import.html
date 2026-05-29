@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>数据导入</title>
+<style>
+body { font-family: "Microsoft YaHei", sans-serif; background: #f0f2f5; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
+.card { background: #fff; border-radius: 8px; padding: 32px; max-width: 600px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); text-align: center; }
+h2 { color: #1677ff; margin-bottom: 8px; }
+p { color: #666; font-size: 14px; margin-bottom: 20px; line-height: 1.6; }
+.btn { display: inline-block; padding: 10px 32px; border-radius: 4px; font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.15s; border: none; margin: 6px; }
+.btn-primary { background: #1677ff; color: #fff; }
+.btn-primary:hover { background: #4096ff; }
+.btn-default { background: #fff; color: #333; border: 1px solid #d9d9d9; }
+#log { text-align: left; background: #f5f5f5; padding: 12px; border-radius: 4px; font-size: 13px; max-height: 300px; overflow-y: auto; margin-top: 16px; display: none; white-space: pre-wrap; font-family: Consolas, monospace; }
+.success { color: #52c41a; }
+.warn { color: #fa8c16; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>套管交付与质量专项改善 — 数据导入</h2>
+  <p>将参考 Excel 中的 8 条历史记录导入到跟踪表网站中。<br><span style="color:#fa8c16">图片（=DISPIMG）无法自动提取，需手动重新上传。</span></p>
+  <button class="btn btn-primary" onclick="doImport()">开始导入</button>
+  <button class="btn btn-default" onclick="location.href='index.html'">返回网站</button>
+  <div id="log"></div>
+</div>
+
+<script>
+var STORAGE_KEY = 'tracker_records_v2';
+
+function genId() {
+  return 'r_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 6);
+}
+
+function doImport() {
+  var log = document.getElementById('log');
+  log.style.display = 'block';
+  log.textContent = '正在导入...\n';
+
+  var now = new Date().toISOString();
+
+  var importData = [
+    {
+      reporter: "人员",
+      description: "内衬管不到安装位",
+      problemType: "工艺",
+      solution: "",
+      deliverable: "",
+      responsible: "",
+      assistant: "",
+      plannedDate: "",
+      status: "未开始",
+      actualDate: "",
+      remarks: "示例"
+    },
+    {
+      reporter: "宁世坤",
+      description: "每次更换模具都要人工去靠感觉对齐:靠用人工一直敲打,如果没对齐会导致刮伤拉痕",
+      problemType: "工艺",
+      solution: "辅推与主夹修改工装，添加限位器（画图纸）",
+      deliverable: "",
+      responsible: "汤耀东",
+      assistant: "",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: "（画图纸）"
+    },
+    {
+      reporter: "蔡京算",
+      description: "之前明确的定制管，要人工来开料",
+      problemType: "物料",
+      solution: "人工自己开料，并建议以后直接定制开好料发过来，减少人工操作与误差",
+      deliverable: "",
+      responsible: "蔡京算",
+      assistant: "谭朝庆",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: ""
+    },
+    {
+      reporter: "钱奋",
+      description: "涨口机三通定位工装螺丝孔对不上",
+      problemType: "夹具/工装",
+      solution: "已发往加工",
+      deliverable: "",
+      responsible: "余运斌",
+      assistant: "",
+      plannedDate: "",
+      status: "未开始",
+      actualDate: "",
+      remarks: "等待加工完成"
+    },
+    {
+      reporter: "郭文迪",
+      description: "工装模具摆放凌乱",
+      problemType: "夹具/工装",
+      solution: "整理工装",
+      deliverable: "",
+      responsible: "蔡京算",
+      assistant: "",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: "部分"
+    },
+    {
+      reporter: "全体人员",
+      description: "一楼太热缺少风扇",
+      problemType: "设备",
+      solution: "安装风扇",
+      deliverable: "",
+      responsible: "夏其通",
+      assistant: "",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: "申请购买"
+    },
+    {
+      reporter: "雷廷",
+      description: "内衬管打不到位，报废三条，固定标准",
+      problemType: "工艺",
+      solution: "写一份新的作业指导书",
+      deliverable: "",
+      responsible: "何泳朝",
+      assistant: "",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: ""
+    },
+    {
+      reporter: "雷廷",
+      description: "弯管检验工装图纸",
+      problemType: "工艺",
+      solution: "画弯管检验工装图纸",
+      deliverable: "",
+      responsible: "汤耀东",
+      assistant: "",
+      plannedDate: "2026-05-27",
+      status: "已完成",
+      actualDate: "2026-05-27",
+      remarks: "（画图纸）"
+    }
+  ];
+
+  // Add id, timestamps, and empty images array
+  var records = importData.map(function(item) {
+    item.id = genId();
+    item.images = [];
+    item.createdAt = now;
+    item.updatedAt = now;
+    return item;
+  });
+
+  // Save to localStorage
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+    log.textContent += '\n\u2714 成功导入 ' + records.length + ' 条记录！\n';
+    log.textContent += '\n现在可以返回网站查看数据。\n';
+    log.textContent += '\n注意：原始 Excel 中的图片（DISPIMG 格式）无法自动导入；\n请在各条记录的编辑页面中手动重新上传图片。\n';
+  } catch(e) {
+    log.textContent += '\n\u2716 导入失败: ' + e.message + '\n';
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+cloudflared.exe
+cloudflared.log
+cloudflare-pages.zip
+extracted_images/
+images/
+worker/
