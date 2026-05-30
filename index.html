@@ -328,7 +328,7 @@ body{
     <button class="hbtn hbtn-outline" onclick="exportExcel()">导出 Excel</button>
     <button class="hbtn hbtn-outline" onclick="exportJSON()">导出 JSON</button>
     <button class="hbtn hbtn-outline" onclick="document.getElementById('import-file').click()">导入 JSON</button>
-    <button class="hbtn hbtn-outline" onclick="restoreBackup()" id="btn-restore">恢复云端备份</button>
+    <button class="hbtn hbtn-outline" onclick="restoreBackup()" id="btn-restore">重置为初始数据</button>
     <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)">
   </div>
 </header>
@@ -857,7 +857,7 @@ function deleteRecord(id){
   showModal('delete-modal');
 }
 
-/* ============ 恢复云端备份 ============ */
+/* ============ 重置为初始数据 ============ */
 function restoreBackup(){
   if(!confirm('将从云端备份文件（backup.json）恢复数据。\n\n点"确定" = 替换当前所有数据\n点"取消" = 追加到现有记录'))return;
   var btn=document.getElementById('btn-restore');
@@ -880,7 +880,7 @@ function restoreBackup(){
   }).catch(function(err){
     toast('恢复失败：'+err.message,'error');
   }).finally(function(){
-    btn.textContent='恢复云端备份';btn.disabled=false;
+    btn.textContent='重置为初始数据';btn.disabled=false;
   });
 }
 
