@@ -672,12 +672,32 @@ function loadLocalFallback(){
   try{var r=localStorage.getItem(STORAGE_KEY);records=r?JSON.parse(r):[]}
   catch(e){records=[]}
   if(records.length===0){
-    var now=new Date().toISOString();
-    records=SEED_DATA.map(function(item){
-      item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
+    // localStorage为空，尝试从云端backup.json加载默认数据
+    fetch('./backup.json?_t='+Date.now()).then(function(resp){
+      if(!resp.ok)throw new Error('skip');
+      return resp.json();
+    }).then(function(data){
+      if(!Array.isArray(data)||data.length===0)throw new Error('skip');
+      var now=new Date().toISOString();
+      data.forEach(function(item){
+        if(!item.id)item.id=genId();
+        if(!item.createdAt)item.createdAt=now;
+        item.updatedAt=now;
+      });
+      records=data;
+      saveLocalRecords();
+      renderList(); updateStats(); updateCloudStatus();
+    }).catch(function(){
+      // backup.json加载失败，回退到SEED_DATA
+      var now=new Date().toISOString();
+      records=SEED_DATA.map(function(item){
+        item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
+      });
+      renderList(); updateStats(); updateCloudStatus();
     });
+  }else{
+    renderList(); updateStats(); updateCloudStatus();
   }
-  renderList(); updateStats(); updateCloudStatus();
 }
 function saveRecords(){pushCloud(); saveLocalRecords()}
 function saveLocalRecords(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(records))}catch(e){}}
