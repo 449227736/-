@@ -325,6 +325,7 @@ body{
   </div>
   <div class="header-actions">
     <button class="hbtn hbtn-primary" onclick="switchPage('add')">+ 新增记录</button>
+    <button class="hbtn hbtn-outline" onclick="pushToGitHub()" id="btn-push-github" title="将当前数据上传到 GitHub 仓库">上传到 GitHub</button>
     <button class="hbtn hbtn-outline" onclick="exportExcel()">导出 Excel</button>
     <button class="hbtn hbtn-outline" onclick="exportJSON()">导出 JSON</button>
     <button class="hbtn hbtn-outline" onclick="document.getElementById('import-file').click()">导入 JSON</button>
@@ -860,6 +861,64 @@ function deleteRecord(id){
     saveRecords();closeModal('delete-modal');toast('记录已删除','success');renderList();updateStats();
   };
   showModal('delete-modal');
+}
+
+/* ============ 上传到 GitHub ============ */
+var GH_OWNER='449227736';
+var GH_REPO='-';
+var GH_FILE='backup.json';
+var GH_TOKEN_KEY='github_pat_tracker';
+
+function pushToGitHub(){
+  var token=localStorage.getItem(GH_TOKEN_KEY);
+  if(!token){
+    token=prompt('请输入 GitHub Personal Access Token\n\n获取方式：\nGitHub → Settings → Developer settings → Personal access tokens → Generate\n权限勾选 repo（完整仓库访问）');
+    if(!token||!token.trim())return;
+    token=token.trim();
+    localStorage.setItem(GH_TOKEN_KEY,token);
+    toast('Token 已保存到浏览器','success');
+  }
+
+  if(!confirm('确定将当前 '+records.length+' 条记录上传到 GitHub 仓库的 backup.json？\n\n上传后，其他人打开网站会自动加载这些数据。'))return;
+
+  var btn=document.getElementById('btn-push-github');
+  btn.textContent='上传中...';btn.disabled=true;
+
+  var apiUrl='https://api.github.com/repos/'+GH_OWNER+'/'+GH_REPO+'/contents/'+GH_FILE;
+  var headers={'Authorization':'token '+token,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'};
+
+  // 第一步：获取当前文件的 SHA（必须提供才能更新）
+  fetch(apiUrl,{headers:headers,method:'GET'}).then(function(r){
+    if(!r.ok){
+      // 文件不存在，创建新文件（不需要 SHA）
+      return null;
+    }
+    return r.json();
+  }).then(function(fileInfo){
+    var body={
+      message:'更新跟踪表数据 '+new Date().toISOString(),
+      content:btoa(unescape(encodeURIComponent(JSON.stringify(records)))),
+      branch:'main'
+    };
+    if(fileInfo&&fileInfo.sha) body.sha=fileInfo.sha;
+    return fetch(apiUrl,{method:'PUT',headers:headers,body:JSON.stringify(body)});
+  }).then(function(r){
+    if(!r.ok) return r.json().then(function(e){throw new Error(e.message||'HTTP '+r.status)});
+    return r.json();
+  }).then(function(){
+    toast('数据已成功上传到 GitHub！共 '+records.length+' 条记录','success');
+  }).catch(function(err){
+    if(err.message&&err.message.indexOf('401')>-1){
+      toast('Token 无效或已过期，请重新设置','error');
+      localStorage.removeItem(GH_TOKEN_KEY);
+    }else if(err.message&&err.message.indexOf('403')>-1){
+      toast('Token 权限不足，需要 repo 权限','error');
+    }else{
+      toast('上传失败：'+err.message,'error');
+    }
+  }).finally(function(){
+    btn.textContent='上传到 GitHub';btn.disabled=false;
+  });
 }
 
 /* ============ 重置为初始数据 ============ */
