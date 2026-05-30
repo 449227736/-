@@ -383,7 +383,7 @@ body{
         <option value="actualDate">实际完成时间</option>
         <option value="createdAt">创建时间</option>
       </select>
-      <input type="date" id="f-date-pick" onchange="applyFilters()" title="选择具体日期" style="width:135px">
+      <input type="date" id="f-date-pick" onchange="onDatePick()" title="选择具体日期" style="width:135px">
       <span class="spacer"></span>
       <span style="font-size:12px;color:var(--text3)" id="filter-count"></span>
       <button class="btn btn-ghost btn-sm" onclick="clearFilters()">清空</button>
@@ -702,6 +702,11 @@ function getFiltered(){
     }
     return true;
   });
+}
+function onDatePick(){
+  var df=document.getElementById('f-date-field');
+  if(!df.value){df.value='plannedDate'}
+  applyFilters();
 }
 function applyFilters(){currentPage=1;renderList()}
 function statFilter(status){
