@@ -325,7 +325,6 @@ body{
   </div>
   <div class="header-actions">
     <button class="hbtn hbtn-primary" onclick="switchPage('add')">+ 新增记录</button>
-    <button class="hbtn hbtn-outline" id="cloud-btn" onclick="enableCloudSync()">☁️ 开启云端同步</button>
     <button class="hbtn hbtn-outline" onclick="exportExcel()">导出 Excel</button>
     <button class="hbtn hbtn-outline" onclick="exportJSON()">导出 JSON</button>
     <button class="hbtn hbtn-outline" onclick="document.getElementById('import-file').click()">导入 JSON</button>
@@ -506,113 +505,6 @@ body{
 <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js?v=2"></script>
 
 <script>
-/* ============ 云端共享 — 零配置 ============ */
-/* 用 localStorage 持久化 blobId，确保同一用户不会重复创建 */
-var API_BASE = 'https://sync-api.449227736.workers.dev/api/blob';
-var BLOB_KEY = 'tracker_cloud_blobId';
-var blobId = (location.hash.replace('#','').trim()) || (localStorage.getItem(BLOB_KEY)||'').trim();
-var pollTimer = null;
-var POLL_MS = 3000;
-var _lastCloudHash = '';
-var _pushTimer = null;
-
-/* 设置 blobId（同时写入 hash 和 localStorage） */
-function setBlobId(id){
-  blobId = id;
-  localStorage.setItem(BLOB_KEY, id);
-  if(location.hash !== '#'+id){ location.hash = id; }
-}
-
-/* 从云端拉取数据 */
-function fetchCloud(){
-  if(!blobId) return Promise.resolve(null);
-  var url = API_BASE+'/'+blobId;
-  return fetch(url).then(function(r){
-    if(r.ok) return r.json();
-    console.warn('fetchCloud HTTP error:', r.status, r.statusText);
-    return null;
-  }).catch(function(e){
-    console.warn('fetchCloud network error:', e.message);
-    return null;
-  });
-}
-
-/* 延迟推送（防止频繁写） */
-function pushCloud(){
-  if(!blobId) return;
-  if(_pushTimer) clearTimeout(_pushTimer);
-  _pushTimer = setTimeout(function(){
-    fetch(API_BASE+'/'+blobId,{
-      method:'PUT',
-      headers:{'Content-Type':'application/json','Accept':'application/json'},
-      body:JSON.stringify(records)
-    }).catch(function(e){console.warn('推送云端失败:',e)});
-  }, 500);
-}
-
-/* 创建新的云端 blob */
-function createBlob(){
-  fetch(API_BASE,{
-    method:'POST',
-    headers:{'Content-Type':'application/json','Accept':'application/json'},
-    body:JSON.stringify(records)
-  }).then(function(r){
-    console.log('createBlob response:', r.status, r.statusText);
-    if(!r.ok) throw new Error('HTTP '+r.status);
-    return r.json().then(function(data){
-      var id = data && data.id;
-      if(!id) throw new Error('no blob id in response');
-      setBlobId(id);
-      startPolling();
-      updateCloudStatus();
-      _lastCloudHash = JSON.stringify(records.map(function(r){return r.id+'|'+r.updatedAt}));
-      toast('云端共享已开启！请分享当前链接给其他人','success');
-    });
-  }).catch(function(e){
-    console.warn('创建云端 blob 失败:', e.message || e);
-    toast('云端连接失败（'+e.message+'），数据暂存本地。建议用浏览器直接打开链接','warn');
-    startPolling();
-  });
-}
-
-/* 手动开启云端同步 */
-function enableCloudSync(){
-  if(blobId){
-    toast('云端同步已开启，当前 blobId: '+blobId,'success');
-    return;
-  }
-  toast('正在连接云端...','info');
-  createBlob();
-}
-
-/* 更新云端状态显示 */
-function updateCloudStatus(){
-  var btn=document.getElementById('cloud-btn');
-  if(!btn) return;
-  if(blobId){
-    btn.textContent='☁️ 云端已连接';
-    btn.style.color='#16a34a';
-  } else {
-    btn.textContent='☁️ 开启云端同步';
-    btn.style.color='';
-  }
-}
-
-/* 启动轮询 */
-function startPolling(){
-  if(pollTimer) clearInterval(pollTimer);
-  pollTimer=setInterval(function(){
-    fetchCloud().then(function(data){
-      if(!data||!Array.isArray(data)) return;
-      var h=JSON.stringify(data.map(function(r){return r.id+'|'+r.updatedAt}));
-      if(h===_lastCloudHash) return;
-      _lastCloudHash=h;
-      records=data;
-      renderList(); updateStats();
-    });
-  },POLL_MS);
-}
-
 /* ============ DATA STORE ============ */
 var STORAGE_KEY = 'tracker_records_v3';
 var TEMPLATE_BASE64 = "UEsDBBQAAAAIAIaWvFxGx01IlQAAAM0AAAAQAAAAZG9jUHJvcHMvYXBwLnhtbE3PTQvCMAwG4L9SdreZih6kDkQ9ip68zy51hbYpbYT67+0EP255ecgboi6JIia2mEXxLuRtMzLHDUDWI/o+y8qhiqHke64x3YGMsRoPpB8eA8OibdeAhTEMOMzit7Dp1C5GZ3XPlkJ3sjpRJsPiWDQ6sScfq9wcChDneiU+ixNLOZcrBf+LU8sVU57mym/8ZAW/B7oXUEsDBBQAAAAIAIaWvFzt8/g56gAAAMsBAAARAAAAZG9jUHJvcHMvY29yZS54bWylkcFOwzAMhl9lyr11mmoTirpcQJxAQmISiFuUeFtF00SJUbu3Jy1bB4Ibx/j//NlWGhOk8RGfog8YqcW0Gl3XJ2nClh2JggRI5ohOpzITfQ73PjpN+RkPELR51wcEwfkGHJK2mjRMwiIsRnZWWrMow0fsZoE1gB067ClBVVZwZQmjS382zMlCjqldqGEYyqGeubxRBa+PD8/z8kXbJ9K9QaYaa6SJqMlHNV0UTmPXwLdic579VUC7yhMknQJu2SV5qW/vdvdMCS42BV8X4mZXcbkWsqrfJteP/qvQedvu238YLwLVwK9/U59QSwMEFAAAAAgAhpa8XJlcnCMQBgAAnCcAABMAAAB4bC90aGVtZS90aGVtZTEueG1s7Vpbc9o4FH7vr9B4Z/ZtC8Y2gba0E3Npdtu0mYTtTh+FEViNbHlkkYR/v0c2EMuWDe2STbqbPAQs6fvORUfn6Dh58+4uYuiGiJTyeGDZL9vWu7cv3uBXMiQRQTAZp6/wwAqlTF61WmkAwzh9yRMSw9yCiwhLeBTL1lzgWxovI9bqtNvdVoRpbKEYR2RgfV4saEDQVFFab18gtOUfM/gVy1SNZaMBE1dBJrmItPL5bMX82t4+Zc/pOh0ygW4wG1ggf85vp+ROWojhVMLEwGpnP1Zrx9HSSICCyX2UBbpJ9qPTFQgyDTs6nVjOdnz2xO2fjMradDRtGuDj8Xg4tsvSi3AcBOBRu57CnfRsv6RBCbSjadBk2PbarpGmqo1TT9P3fd/rm2icCo1bT9Nrd93TjonGrdB4Db7xT4fDronGq9B062kmJ/2ua6TpFmhCRuPrehIVteVA0yAAWHB21szSA5ZeKfp1lBrZHbvdQVzwWO45iRH+xsUE1mnSGZY0RnKdkAUOADfE0UxQfK9BtorgwpLSXJDWzym1UBoImsiB9UeCIcXcr/31l7vJpDN6nX06zmuUf2mrAaftu5vPk/xz6OSfp5PXTULOcLwsCfH7I1thhyduOxNyOhxnQnzP9vaRpSUyz+/5CutOPGcfVpawXc/P5J6MciO73fZYffZPR24j16nAsyLXlEYkRZ/ILbrkETi1SQ0yEz8InYaYalAcAqQJMZahhvi0xqwR4BN9t74IyN+NiPerb5o9V6FYSdqE+BBGGuKcc+Zz0Wz7B6VG0fZVvNyjl1gVAZcY3zSqNSzF1niVwPGtnDwdExLNlAsGQYaXJCYSqTl+TUgT/iul2v6c00DwlC8k+kqRj2mzI6d0Js3oMxrBRq8bdYdo0jx6/gX5nDUKHJEbHQJnG7NGIYRpu/AerySOmq3CEStCPmIZNhpytRaBtnGphGBaEsbReE7StBH8Waw1kz5gyOzNkXXO1pEOEZJeN0I+Ys6LkBG/HoY4SprtonFYBP2eXsNJweiCy2b9uH6G1TNsLI73R9QXSuQPJqc/6TI0B6OaWQm9hFZqn6qHND6oHjIKBfG5Hj7lengKN5bGvFCugnsB/9HaN8Kr+ILAOX8ufc+l77n0PaHStzcjfWfB04tb3kZuW8T7rjHa1zQuKGNXcs3Ix1SvkynYOZ/A7P1oPp7x7frZJISvmlktIxaQS4GzQSS4/IvK8CrECehkWyUJy1TTZTeKEp5CG27pU/VKldflr7kouDxb5OmvoXQ+LM/5PF/ntM0LM0O3ckvqtpS+tSY4SvSxzHBOHssMO2c8kh22d6AdNfv2XXbkI6UwU5dDuBpCvgNtup3cOjiemJG5CtNSkG/D+enFeBriOdkEuX2YV23n2NHR++fBUbCj7zyWHceI8qIh7qGGmM/DQ4d5e1+YZ5XGUDQUbWysJCxGt2C41/EsFOBkYC2gB4OvUQLyUlVgMVvGAyuQonxMjEXocOeXXF/j0ZLj26ZltW6vKXcZbSJSOcJpmBNnq8reZbHBVR3PVVvysL5qPbQVTs/+Wa3InwwRThYLEkhjlBemSqLzGVO+5ytJxFU4v0UzthKXGLzj5sdxTlO4Ena2DwIyubs5qXplMWem8t8tDAksW4hZEuJNXe3V55ucrnoidvqXd8Fg8v1wyUcP5TvnX/RdQ65+9t3j+m6TO0hMnHnFEQF0RQIjlRwGFhcy5FDukpAGEwHNlMlE8AKCZKYcgJj6C73yDLkpFc6tPjl/RSyDhk5e0iUSFIqwDAUhF3Lj7++TaneM1/osgW2EVDJk1RfKQ4nBPTNyQ9hUJfOu2iYLhdviVM27Gr4mYEvDem6dLSf/217UPbQXPUbzo5ngHrOHc5t6uMJFrP9Y1h75Mt85cNs63gNe5hMsQ6R+wX2KioARq2K+uq9P+SWcO7R78YEgm/zW26T23eAMfNSrWqVkKxE/Swd8H5IGY4xb9DRfjxRiraaxrcbaMQx5gFjzDKFmON+HRZoaM9WLrDmNCm9B1UDlP9vUDWj2DTQckQVeMZm2NqPkTgo83P7vDbDCxI7h7Yu/AVBLAwQUAAAACACGlrxcKImbn4ADAADSCwAAGAAAAHhsL3dvcmtzaGVldHMvc2hlZXQxLnhtbJWWWU/bQBDHv4rlDxBfuUBJpBJuiISK2j6bZJNY2N7U3jT0tQdHD0IPAVWlVvRQgQdEBS0h0PbLxCZ54it0vXbCES/bviTZ/+xvZrwzE2+qBq15uwwA4hYM3bTTfBmhyqAg2PkyMFQ7AivAxJYitAwV4aVVEuyKBdQCgQxdkEUxLhiqZvKZFNFmrEwKVpGumWDG4uyqYajWwyGgw1qal/iucFsrlRERhEyqopbALEB3KhjAS6Hnp6AZwLQ1aHIWKKb5W9JgTiEE2XFXAzX70m/Oe5g5COe9xUQhzYteTkAHeeS5UPHXA5AFuu55wpncD5zyF0E98vLvrvtR8vw4vTnVBlmo39MKqJzmkzxXAEW1qqPbsDYOgmeKEYd5qNvkk6v5m+MRbMhXbQSNAMeRDc30v9WF7mlcQiQ5kqBBcgDJ1yE5GUkqsqhIMg1VAlS5jg5EYskbyWhARvsyTUQGpKgYp5KxgIz1pRtnkPGAjPeRIoVIBEQi5DypYZIBlLwOJViHMhCQA/3haAUXuxUX/7sEUq9b+tslGhEZcLdrpL62wTC116Rux0h+ywh+c5PRGFaRmklZsMZZBPBGQJG6jnpDgUcx7+0gk0c2YlUzvb+JWWRhq4YdoozzdeNsb6vV/NI62Ww1VtuH252leqvxprN17L49dtafdDb2Op82ndNHTqPRPvrYbuy2t7bPT5dlUY6LMTnhvj901/fPT1dSAsKJel6FfBB7yI8tk9imfwCenqXowxR9hKKPUvQxij5O0Sco+iRFn6Lo0xQ9168LuIC9Ksp+FeUovYoy8aDQqtisO/WjsArczPnFdetrzlKz1WyGOMgyApO+6Lqpt//sh/gY/pckzr6fOB+eh9AjjAze/z5bWRLa3xY7n16F4KM34+1vn53FA3d1113/FUKP3Uz7c3O2shOCjjMCH35unZyEH/oE45Ff1p1nO+HoJCPq3paz/NrZe+Eur7kbPzsbhyE+phjhffrxU2fxRwg9zaI/dN49ZWSQY/j4suQebF/lrgyU4g9UXKQPlEIiRK9F6I3sEMOeZdiHGfYRhn2UYR9j2McZ9gmGfZJhn2LYpxn2HN3uV1K49LIzgFUiF0mby8OqGdSxp15cVoOr5cV+/66bU62SZtqcDoqYFcl71/Ibwl8gWCGvyDmIcLP4r1V85waWtwHbixCi3sKL0LvGZ/4CUEsDBBQAAAAIAIaWvFyKkhmMHAMAAG8PAAANAAAAeGwvc3R5bGVzLnhtbN1XXY7TMBC+SpQDkLbZjRrUVIJIKyEBWmn3gVe3cVJLThwct7T7zgF45g5wAAS3QWJvgcfOX38mlGUfgFRV7Pn8zTcej+12VqkdpzcrSpWzzXlRRe5KqfKp51XLFc1J9USUtNBIKmROlO7KzKtKSUlSASnn3mQ0CrycsMKdz4p1fpWrylmKdaEid+Q63nyWiqIzXbjWoMeSnDobwiM3JpwtJLODSc74ztonxrIUXEhH6Who5I6NqbqzA8Z1F0KtfeWsENJYPStzKPb926cfXz/ff3x//+VDz7/MFjre0ZV59kUuHtfd5OHu7DPgzrwq7ZZxvp9ybZjPSqIUlcWV7liSsR5jdft2V+qUZ5LsxpNL93xGJThLQDSL95PRRr9AEa/n9Y/12uQf6bXIST3z0mlcCJlQ2SZy4jam+YzTVAFfsmxlGkqURkkoJXJoJYxkoiA20w1tj272XuSqldk72Ep7MLYROpNiBtuYzmTooW3wZ1Ls6N7k6oZO3JJyfgNe3qRt9sba1zZ17BHxIjGnA5Rr09Qpr5vWTd0Bpb4767zn9/Jhfku2Eer5Wk+hMP23a6HotaQp25r+Nu0CwNyPO/eTvnttJ2XJd884y4qc2tmfrTifkYbnrIRkd1oNtvpSG6g+2zZUKrbsW95JUt7SrWrOR2+bnpWTw6AfIyeTfzEnfhe0/9cF7dUF39tWe5uqtTpwj0Tua7iqeW+1FmvGFSvq3oolCS2O95b2r8hC/xjYE9CjEpqSNVe3LRi5XfsVTdg6D9tR15CbelTXfgnn0TjobjQtxoqEbmkS1119wMTISXMI9Y7vYwhlWRCBAES10DBQluWhWv/jvKb4vCyIRjg9DU1x1hRnWd5JKDYfVAthhfpBphyGvh8EaHrj+HQYMZrDIIAv4hCNEDioFqj9buYHCmCgbH5RG+gqD5YNOuWBEkWnPJB5gJAcAicMkQJAtYCDLgpaURAEogWlhrB8H9YZjRDd5gNQGKIQFClSvUGAJSqAD7Je6Cby/TBEIACRMHwfhWDDDkBoGBAICvm+vUgP7jOvuee87i/2/CdQSwMEFAAAAAgAhpa8XLdH64rAAAAAFgIAAAsAAABfcmVscy8ucmVsc52SS24CMQxArxJlX0ypxAIxrNiwQ4gLuInno5nEkWPE9PaN2MAgaBFL/56eLa8PNKB2HHPbpWzGMMRc2VY1rQCyaylgnnGiWCo1S0AtoTSQ0PXYECzm8yXILcNu1rdMc/xJ9AqR67pztGV3ChT1Afiuw5ojSkNa2XGAM0v/zdzPCtSana+s7PynNfCmzPP1IJCiR0VwLPSRpEyLdpSvPp7dvqTzpWNitHjf6P/z0KgUPfm/nTClidLXRQkmb7D5BVBLAwQUAAAACACGlrxc9nUBqjABAAApAgAADwAAAHhsL3dvcmtib29rLnhtbI2Q0U7DMAxFf6XKB9BugklM616YgEkIEEN7z1p3tZbEleNusK8nSSlM4oUnx9fWyb1enIgPO6JD9mGN83MuVSvSzfPcVy1Y7a+oAxdmDbHVElre59Q0WMGKqt6Ck3xaFLOcwWhBcr7FzquB9h+W7xh07VsAsWZAWY1OLRejs1fO8suOBKr4U1SjskU4+d+F2GZH9LhDg/JZqvQ2oDKLDi2eoS5VoTLf0umRGM/kRJtNxWRMqSbDYAssWP2RN9Hmu975pIjevcXMpZoVAdgge0kbia+DySOE5aHrhe7RCPBKCzww9R26fcKEGPlFjnSKsWZOWyhVoiYPoa7rwY8E0EU6nmMY8Lr+Ro6cGhp0UD8HkI+DkKoKJ40lkabXN5Pb4L435i5oL+6JdP1jbLzq8gtQSwMEFAAAAAgAhpa8XDPr47qtAAAA+wEAABoAAAB4bC9fcmVscy93b3JrYm9vay54bWwucmVsc7WRPQ6DMAyFrxLlABio1KECpi6sFReIgvkRgUSxq8LtG8EASB26MFnPlr/3ZGcvNIp7O1HXOxLzaCbKZcfsHgCkOxwVRdbhFCaN9aPiIH0LTulBtQhpHN/BHxmyyI5MUS0O/yHapuk1Pq1+jzjxDzB8rB+oQ2QpKuVb5FzCbPY2wVqSKJClKOtc+rJOpIDLEhEvBmmPs+mTf3qlP4dd3O1XuTXPR7itIeD06+ILUEsDBBQAAAAIAIaWvFybhkKEGwEAANcDAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbK2Tz07DMAzGX6XqdWozOHBA6y6MK+zAC4TEXaPmn2JvdG+P27JKoLENlUujxvb3c/wlq7djBMw6Zz1WeUMUH4VA1YCTWIYIniN1SE4S/6adiFK1cgfifrl8ECp4Ak8F9Rr5erWBWu4tZc8db6MJvsoTWMyzpzGxZ1W5jNEaJYnj4uD1D0rxRSi5csjBxkRccEKeibOIIfQr4VT4eoCUjIZsKxO9SMdporMC6WgBy8saZ7oMdW0U6KD2jktKjAmkxgaAnC1H0cUVNPGQYfzezW5gkLlI5NRtChHZtQR/551s6auLyEKQyFw55IRk7dknhN5xDfpWOE/4I6R28ATFsMwf83efJ/1bGnkPof3ve9avpZPGTw2I4T2vPwFQSwECFAAUAAAACACGlrxcRsdNSJUAAADNAAAAEAAAAAAAAAAAAAAAgAEAAAAAZG9jUHJvcHMvYXBwLnhtbFBLAQIUABQAAAAIAIaWvFzt8/g56gAAAMsBAAARAAAAAAAAAAAAAACAAcMAAABkb2NQcm9wcy9jb3JlLnhtbFBLAQIUABQAAAAIAIaWvFyZXJwjEAYAAJwnAAATAAAAAAAAAAAAAACAAdwBAAB4bC90aGVtZS90aGVtZTEueG1sUEsBAhQAFAAAAAgAhpa8XCiJm5+AAwAA0gsAABgAAAAAAAAAAAAAALaBHQgAAHhsL3dvcmtzaGVldHMvc2hlZXQxLnhtbFBLAQIUABQAAAAIAIaWvFyKkhmMHAMAAG8PAAANAAAAAAAAAAAAAACAAdMLAAB4bC9zdHlsZXMueG1sUEsBAhQAFAAAAAgAhpa8XLdH64rAAAAAFgIAAAsAAAAAAAAAAAAAAIABGg8AAF9yZWxzLy5yZWxzUEsBAhQAFAAAAAgAhpa8XPZ1AaowAQAAKQIAAA8AAAAAAAAAAAAAAIABAxAAAHhsL3dvcmtib29rLnhtbFBLAQIUABQAAAAIAIaWvFwz6+O6rQAAAPsBAAAaAAAAAAAAAAAAAACAAWARAAB4bC9fcmVscy93b3JrYm9vay54bWwucmVsc1BLAQIUABQAAAAIAIaWvFybhkKEGwEAANcDAAATAAAAAAAAAAAAAACAAUUSAABbQ29udGVudF9UeXBlc10ueG1sUEsFBgAAAAAJAAkAPgIAAJETAAAAAA==";
@@ -635,39 +527,7 @@ var SEED_DATA = [
 ];
 
 /* Load / Save */
-function loadRecords(){
-  if(blobId){
-    /* 有 blobId（从 URL hash 或 localStorage）→ 从云端加载 */
-    toast('正在从云端加载数据...','info');
-    fetchCloud().then(function(data){
-      if(data && Array.isArray(data) && data.length>0){
-        records=data;
-        _lastCloudHash=JSON.stringify(records.map(function(r){return r.id+'|'+r.updatedAt}));
-        renderList(); updateStats(); startPolling(); updateCloudStatus();
-        toast('已从云端加载 '+records.length+' 条记录','success');
-      } else {
-        /* blob 为空 → 本地加载 */
-        toast('云端数据为空，使用本地数据','warn');
-        loadLocalFallback();
-      }
-    }).catch(function(e){
-      console.warn('loadRecords fetchCloud error:', e && e.message);
-      toast('云端连接失败（'+ (e && e.message || '网络错误') +'），使用本地数据','warn');
-      loadLocalFallback();
-    });
-  } else {
-    /* 无 blobId → 使用本地数据，不自动创建云端 blob */
-    loadLocalFallback();
-  }
-}
-function initSeedAndPush(){
-  var now=new Date().toISOString();
-  records=SEED_DATA.map(function(item){
-    item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
-  });
-  createBlob();
-  renderList(); updateStats();
-}
+function loadRecords(){ loadLocalFallback(); }
 function loadLocalFallback(){
   try{var r=localStorage.getItem(STORAGE_KEY);records=r?JSON.parse(r):[]}
   catch(e){records=[]}
@@ -686,20 +546,20 @@ function loadLocalFallback(){
       });
       records=data;
       saveLocalRecords();
-      renderList(); updateStats(); updateCloudStatus();
+      renderList(); updateStats();
     }).catch(function(){
       // backup.json加载失败，回退到SEED_DATA
       var now=new Date().toISOString();
       records=SEED_DATA.map(function(item){
         item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
       });
-      renderList(); updateStats(); updateCloudStatus();
+      renderList(); updateStats();
     });
   }else{
-    renderList(); updateStats(); updateCloudStatus();
+    renderList(); updateStats();
   }
 }
-function saveRecords(){pushCloud(); saveLocalRecords()}
+function saveRecords(){ saveLocalRecords(); }
 function saveLocalRecords(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(records))}catch(e){}}
 function genId(){return'r_'+Date.now()+'_'+Math.random().toString(36).substr(2,6)}
 
