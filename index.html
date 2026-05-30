@@ -329,6 +329,7 @@ body{
     <button class="hbtn hbtn-outline" onclick="exportExcel()">导出 Excel</button>
     <button class="hbtn hbtn-outline" onclick="exportJSON()">导出 JSON</button>
     <button class="hbtn hbtn-outline" onclick="document.getElementById('import-file').click()">导入 JSON</button>
+    <button class="hbtn hbtn-outline" onclick="restoreBackup()" id="btn-restore">恢复云端备份</button>
     <input type="file" id="import-file" accept=".json" style="display:none" onchange="importJSON(event)">
   </div>
 </header>
@@ -974,6 +975,33 @@ function deleteRecord(id){
     saveRecords();closeModal('delete-modal');toast('记录已删除','success');renderList();updateStats();
   };
   showModal('delete-modal');
+}
+
+/* ============ 恢复云端备份 ============ */
+function restoreBackup(){
+  if(!confirm('将从云端备份文件（backup.json）恢复数据。\n\n点"确定" = 替换当前所有数据\n点"取消" = 追加到现有记录'))return;
+  var btn=document.getElementById('btn-restore');
+  btn.textContent='恢复中...';btn.disabled=true;
+  fetch('./backup.json?_t='+Date.now()).then(function(r){
+    if(!r.ok)throw new Error('备份文件加载失败（HTTP '+r.status+'）');
+    return r.json();
+  }).then(function(data){
+    if(!Array.isArray(data))throw new Error('备份文件格式错误：需要 JSON 数组');
+    var mode=confirm('备份文件中共有 '+data.length+' 条记录。\n\n【第二次确认】\n点"确定" = 替换当前所有数据\n点"取消" = 追加到现有记录');
+    var now=new Date().toISOString();
+    data.forEach(function(item){
+      if(!item.id)item.id=genId();
+      if(!item.createdAt)item.createdAt=now;
+      item.updatedAt=now;
+    });
+    if(mode){records=data}else{records=records.concat(data)}
+    saveRecords();switchPage('list');
+    toast('已从云端备份恢复 '+data.length+' 条记录！','success');
+  }).catch(function(err){
+    toast('恢复失败：'+err.message,'error');
+  }).finally(function(){
+    btn.textContent='恢复云端备份';btn.disabled=false;
+  });
 }
 
 /* ============ JSON IMPORT / EXPORT ============ */
