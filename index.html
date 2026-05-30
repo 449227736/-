@@ -1027,7 +1027,6 @@ function importJSON(e){
       toast('成功导入 '+data.length+' 条记录！','success');
     }catch(err){toast('导入失败：'+err.message,'error')}
   };
-  reader.onloadend=function(e){reader.onload(null);}
   reader.readAsText(file);
   e.target.value='';
 }
