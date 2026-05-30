@@ -1039,78 +1039,112 @@ function fmtDate(v){
 async function doExportTemplate(recs){
   var bar=document.getElementById('export-bar');
 
-  /* 1. Load template from embedded base64 */
-  var buffer=b64ToBuffer(TEMPLATE_BASE64);
+  /* ─── 1. Create fresh workbook (not from template) ─── */
   var wb=new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
-  var ws=wb.getWorksheet(1);
+  var ws=wb.addWorksheet('跟踪表');
 
-  /* 2. Read template row 3 cell styles */
-  var TPL_ROW=3, NCOLS=13;
-  var tplStyles=[];
-  for(var c=1;c<=NCOLS;c++){
-    var tc=ws.getCell(TPL_ROW,c);
-    tplStyles.push({
-      font:JSON.parse(JSON.stringify(tc.font||{name:'微软雅黑',size:12})),
-      fill:JSON.parse(JSON.stringify(tc.fill||{type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}})),
-      alignment:JSON.parse(JSON.stringify(tc.alignment||{horizontal:'center',vertical:'middle',wrapText:true})),
-      border:JSON.parse(JSON.stringify(tc.border||{})),
-      numFmt:tc.numFmt||''
-    });
-  }
+  /* ─── 2. Column widths (A-M) ─── */
+  ws.columns=[
+    {width:8},   // A 序号
+    {width:12},  // B 问题提出人
+    {width:30},  // C 异常问题描述
+    {width:12},  // D 问题类型
+    {width:18},  // E 图片/视频
+    {width:30},  // F 解决措施
+    {width:18},  // G 交付物
+    {width:12},  // H 责任人
+    {width:12},  // I 协助人
+    {width:14},  // J 计划完成时间
+    {width:12},  // K 完成情况
+    {width:14},  // L 实际完成时间
+    {width:16}   // M 备注
+  ];
 
-  /* 3. Update title date */
+  /* ─── 3. Style constants ─── */
+  var borderStyle={
+    top:{style:'thin',color:{argb:'FF000000'}},
+    left:{style:'thin',color:{argb:'FF000000'}},
+    bottom:{style:'thin',color:{argb:'FF000000'}},
+    right:{style:'thin',color:{argb:'FF000000'}}
+  };
+  var centerAlign={vertical:'middle',horizontal:'center',wrapText:true};
+  var headerFill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};
+  var whiteFill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}};
+  var greenFill={type:'pattern',pattern:'solid',fgColor:{argb:'FF00B050'}};
+  var redFill2={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};
+  var yellowFill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}};
+  var blackFont={name:'Microsoft YaHei',size:11,color:{argb:'FF000000'}};
+  var whiteFont={name:'Microsoft YaHei',size:11,color:{argb:'FFFFFFFF'},bold:true};
+  var titleFont={name:'Microsoft YaHei',size:14,color:{argb:'FFFFFFFF'},bold:true};
+
+  var startCol=1,endCol=13,dataStartRow=4,statusCol=11;
+
+  /* ─── 4. Date string ─── */
   var now=new Date();
   var dateStr=now.getFullYear()+('0'+(now.getMonth()+1)).slice(-2)+('0'+now.getDate()).slice(-2);
-  ws.getCell('A1').value='套管交付与质量专项改善问题异常跟踪表（'+dateStr+'更新）';
 
-  /* 4. Clear all data rows (keep title+header) */
-  for(var dr=TPL_ROW;dr<=ws.rowCount;dr++){
-    var row=ws.getRow(dr);
-    row.fill=undefined;
-    row.eachCell({includeEmpty:true},function(cell,colNum){
-      cell.value=null;
-    });
+  /* ─── 5. Row 1: Big title, merged A1:M1 ─── */
+  ws.getRow(1).height=40;
+  ws.mergeCells('A1:M1');
+  var titleCell=ws.getCell('A1');
+  titleCell.value='套管交付与质量专项改善问题异常跟踪表（'+dateStr+'更新）';
+  titleCell.fill=headerFill;
+  titleCell.font=titleFont;
+  titleCell.alignment=centerAlign;
+  titleCell.border=borderStyle;
+
+  /* ─── 6. Rows 2-3: merged column headers ─── */
+  var headers=['序号','问题提出人','异常问题描述','问题类型','图片/视频','解决措施','交付物','责任人','协助人','计划完成时间','完成情况','实际完成时间','备注'];
+  ws.getRow(2).height=30;
+  ws.getRow(3).height=30;
+  for(var col=1;col<=13;col++){
+    // merge row 2 and row 3 for this column
+    var topAddr=ws.getCell(2,col).address;
+    var botAddr=ws.getCell(3,col).address;
+    ws.mergeCells(topAddr+':'+botAddr);
+    // set style and value on the top cell (merged anchor)
+    var hc=ws.getCell(2,col);
+    hc.value=headers[col-1];
+    hc.fill=headerFill;
+    hc.font=whiteFont;
+    hc.alignment=centerAlign;
+    hc.border=borderStyle;
+    // also set border on the bottom cell of the merge to ensure Excel renders it
+    var hcBot=ws.getCell(3,col);
+    hcBot.border=borderStyle;
   }
 
-  /* 5. Write data rows (start from TPL_ROW, clear template style first) */
+  /* ─── 7. Ensure enough rows for data ─── */
+  var totalRows=dataStartRow+recs.length-1;
+
+  /* ─── 8. FIRST PASS: base style for ALL data cells (rows 4 to totalRows) ─── */
+  for(var rowNumber=dataStartRow;rowNumber<=totalRows;rowNumber++){
+    for(var colNumber=startCol;colNumber<=endCol;colNumber++){
+      var cell=ws.getCell(rowNumber,colNumber);
+      cell.fill=whiteFill;
+      cell.font=blackFont;
+      cell.border=borderStyle;
+      cell.alignment=centerAlign;
+    }
+  }
+
+  /* ─── 9. SECOND PASS: write data values only (do NOT touch fill/font/border) ─── */
   var imgQueue=[];
   for(var i=0;i<recs.length;i++){
     var r=recs[i];
-    var rn=TPL_ROW+i;
-    var row=ws.getRow(rn);
-    row.height=60;
+    var rn=dataStartRow+i;
+    ws.getRow(rn).height=60;
 
     var vals=[
       i+1,r.reporter||'',r.description||'',r.problemType||'','',
       r.solution||'',r.deliverable||'',r.responsible||'',r.assistant||'',
       fmtDate(r.plannedDate),r.status||'',fmtDate(r.actualDate),r.remarks||''
     ];
-
-    for(var c=0;c<NCOLS;c++){
-      var cell=ws.getCell(rn,c+1);
-      var style=tplStyles[c];
-      cell.font=style.font;
-      /* 不要复制模板的 fill，彻底避免模板底色干扰 */
-      cell.alignment=style.alignment;
-      cell.border=style.border;
-      if(style.numFmt)cell.numFmt=style.numFmt;
-      if(c!==4)cell.value=vals[c];
+    for(var c=0;c<13;c++){
+      if(c!==4) ws.getCell(rn,c+1).value=vals[c];
     }
 
-    /* 状态颜色标注（仅完成情况列K=第11列）：已完成=绿色，处理中=黄色，未开始=红色 */
-    var statusCell=ws.getCell(rn,11);
-    if(r.status==='已完成'){
-      statusCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF00B050'}};
-      statusCell.font={name:'微软雅黑',size:12,color:{argb:'FFFFFFFF'}};
-    }else if(r.status==='处理中'){
-      statusCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFC000'}};
-      statusCell.font={name:'微软雅黑',size:12,color:{argb:'FFFFFFFF'}};
-    }else if(r.status==='未开始'){
-      statusCell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};
-      statusCell.font={name:'微软雅黑',size:12,color:{argb:'FFFFFFFF'}};
-    }
-
+    /* collect images */
     if(r.images&&r.images.length>0){
       for(var mi=0;mi<r.images.length;mi++){
         imgQueue.push({row:rn,img:r.images[mi],col:4});
@@ -1123,7 +1157,29 @@ async function doExportTemplate(recs){
     }
   }
 
-  /* 6. Insert images */
+  /* ─── 10. THIRD PASS (LAST): ONLY K column status color ─── */
+  for(var rowNumber=dataStartRow;rowNumber<=totalRows;rowNumber++){
+    var statusCell=ws.getCell(rowNumber,statusCol);
+    var status=String(statusCell.value||'').trim();
+    // always re-set border & alignment to prevent ExcelJS clearing them on fill change
+    statusCell.border=borderStyle;
+    statusCell.alignment=centerAlign;
+    if(status==='已完成'){
+      statusCell.fill=greenFill;
+      statusCell.font=whiteFont;
+    }else if(status==='未开始'){
+      statusCell.fill=redFill2;
+      statusCell.font=whiteFont;
+    }else if(status==='处理中'){
+      statusCell.fill=yellowFill;
+      statusCell.font=blackFont;
+    }else{
+      statusCell.fill=whiteFill;
+      statusCell.font=blackFont;
+    }
+  }
+
+  /* ─── 11. Insert images ─── */
   var MAX_IMG_W=120,MAX_IMG_H=90;
   for(var ii=0;ii<imgQueue.length;ii++){
     var info=imgQueue[ii];
@@ -1146,11 +1202,13 @@ async function doExportTemplate(recs){
     }catch(e){
       var fc=ws.getCell(info.row,info.col+1);
       fc.value='图片导出失败';
-      fc.font={name:'微软雅黑',size:9,color:{argb:'FFFF0000'}};
+      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FFFF0000'}};
+      fc.border=borderStyle;
+      fc.alignment=centerAlign;
     }
   }
 
-  /* 7. Download */
+  /* ─── 12. Download ─── */
   bar.textContent='正在生成下载文件...';
   var wbBuffer=await wb.xlsx.writeBuffer();
   var blob=new Blob([wbBuffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
