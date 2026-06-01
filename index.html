@@ -561,35 +561,34 @@ var SEED_DATA = [
 /* Load / Save */
 function loadRecords(){ loadLocalFallback(); }
 function loadLocalFallback(){
-  try{var r=localStorage.getItem(STORAGE_KEY);records=r?JSON.parse(r):[]}
-  catch(e){records=[]}
-  if(records.length===0){
-    // localStorage为空，尝试从云端backup.json加载默认数据
-    fetch('./backup.json?_t='+Date.now()).then(function(resp){
-      if(!resp.ok)throw new Error('skip');
-      return resp.json();
-    }).then(function(data){
-      if(!Array.isArray(data)||data.length===0)throw new Error('skip');
-      var now=new Date().toISOString();
-      data.forEach(function(item){
-        if(!item.id)item.id=genId();
-        if(!item.createdAt)item.createdAt=now;
-        item.updatedAt=now;
-      });
-      records=data;
-      saveLocalRecords();
-      renderList(); updateStats();
-    }).catch(function(){
-      // backup.json加载失败，回退到SEED_DATA
-      var now=new Date().toISOString();
-      records=SEED_DATA.map(function(item){
-        item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
-      });
-      renderList(); updateStats();
+  // 每次刷新都清除旧缓存，直接从云端 backup.json 加载最新数据
+  localStorage.removeItem(STORAGE_KEY);
+  records=[];
+  fetch('./backup.json?_t='+Date.now()).then(function(resp){
+    if(!resp.ok)throw new Error('skip');
+    return resp.json();
+  }).then(function(data){
+    if(!Array.isArray(data)||data.length===0)throw new Error('skip');
+    var now=new Date().toISOString();
+    data.forEach(function(item){
+      if(!item.id)item.id=genId();
+      if(!item.createdAt)item.createdAt=now;
+      item.updatedAt=now;
+      if(!item.images)item.images=[];
+      if(!item.deliverableImages)item.deliverableImages=[];
     });
-  }else{
+    records=data;
+    saveLocalRecords();
     renderList(); updateStats();
-  }
+  }).catch(function(){
+    // backup.json加载失败，回退到SEED_DATA
+    var now=new Date().toISOString();
+    records=SEED_DATA.map(function(item){
+      item.id=genId();item.images=item.images||[];item.createdAt=now;item.updatedAt=now;return item;
+    });
+    saveLocalRecords();
+    renderList(); updateStats();
+  });
 }
 function saveRecords(){ saveLocalRecords(); }
 function saveLocalRecords(){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(records))}catch(e){}}
