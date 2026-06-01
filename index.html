@@ -1133,9 +1133,9 @@ async function doExportNormal(recs,bar){
     {width:12},  // B 问题提出人
     {width:30},  // C 异常问题描述
     {width:12},  // D 问题类型
-    {width:22},  // E 图片/视频
+    {width:16},  // E 图片/视频
     {width:30},  // F 解决措施
-    {width:22},  // G 交付物
+    {width:16},  // G 交付物
     {width:12},  // H 责任人
     {width:12},  // I 协助人
     {width:14},  // J 计划完成时间
@@ -1220,7 +1220,7 @@ async function doExportNormal(recs,bar){
 
     /* 如果该行有图片，行高设为100；否则60 */
     var hasImg=(r.images&&r.images.length>0)||(r.deliverableImages&&r.deliverableImages.length>0);
-    ws.getRow(rn).height=hasImg?100:60;
+    ws.getRow(rn).height=hasImg?90:60;
 
     var vals=[
       i+1,r.reporter||'',r.description||'',r.problemType||'','',
@@ -1309,7 +1309,7 @@ async function doExportNormal(recs,bar){
 
 /* ============ ORIGINAL IMAGE CELL INSERT HELPER ============ */
 
-/* 直接使用原始图片插入 Excel 单元格，不经过 canvas 压缩 */
+/* 直接使用原图 buffer 插入 Excel 单元格，按原图比例计算显示尺寸，竖图自动居中右移 */
 async function insertOriginalImageToCell(wb, ws, imageObj, rowNumber, col0){
   /* 提取原始图片数据，按优先级：data > dataUrl > src > url > base64 > preview */
   var raw=imageObj;
@@ -1333,8 +1333,7 @@ async function insertOriginalImageToCell(wb, ws, imageObj, rowNumber, col0){
   /* 如果不是 data:image 开头，尝试补全前缀 */
   if(data.indexOf('data:image')!==0){
     if(data.indexOf('http')===0){
-      /* URL 类型，当前无法直接插入，跳过 */
-      console.log('[原图插入] 跳过URL类型图片（ExcelJS不支持直接插入URL图片）');
+      console.log('[原图插入] 跳过URL类型图片');
       return false;
     }
     if(/^[A-Za-z0-9+/=]+$/.test(data)&&data.length>100){
@@ -1350,17 +1349,51 @@ async function insertOriginalImageToCell(wb, ws, imageObj, rowNumber, col0){
     if(data.indexOf('data:image/jpeg')===0) ext='jpeg';
     else if(data.indexOf('data:image/png')===0) ext='png';
     else if(data.indexOf('data:image/gif')===0) ext='gif';
-    else if(data.indexOf('data:image/webp')===0) ext='png'; /* webp 转为 png */
+    else if(data.indexOf('data:image/webp')===0) ext='png';
     var b64Part=data.split(',')[1];
     if(!b64Part) throw new Error('base64数据为空');
     var buf=b64ToBuffer(b64Part);
     console.log('[原图插入] 原图buffer长度='+buf.length+' ext='+ext+' row='+rowNumber);
+
+    /* 获取原图宽高用于按比例计算显示尺寸和居中偏移 */
+    var imgW=0, imgH=0;
+    try{
+      var tmpImg=new Image();
+      await new Promise(function(resolve){
+        tmpImg.onload=resolve;
+        tmpImg.onerror=resolve;
+        tmpImg.src=data;
+      });
+      if(tmpImg.naturalWidth) imgW=tmpImg.naturalWidth;
+      if(tmpImg.naturalHeight) imgH=tmpImg.naturalHeight;
+    }catch(e){}
+    console.log('[原图插入] 原图尺寸='+imgW+'x'+imgH);
+
     var imgId=wb.addImage({buffer:buf, extension:ext});
-    /* twoCell 锚定：让图片随单元格移动，边缘留 0.08 边距 */
+
+    /* 按原图比例计算 Excel 显示尺寸，最大 70px */
+    var maxSize=70;
+    var dispW=maxSize, dispH=maxSize;
+    var ratio=1;
+    if(imgW>0&&imgH>0){
+      ratio=imgW/imgH;
+      if(ratio>=1){ dispW=maxSize; dispH=maxSize/ratio; }
+      else{ dispH=maxSize; dispW=maxSize*ratio; }
+    }
+    /* 居中偏移：竖图额外右移避免贴左 */
+    var offsetX=0.28;
+    var offsetY=0.18;
+    if(ratio<0.8) offsetX=0.42; /* 竖图，图片窄，向右推 */
+    else if(ratio<1) offsetX=0.35;
+    if(ratio>1.5) offsetY=0.28; /* 横图，图片矮，向下推 */
+
+    console.log('[原图插入] ratio='+ratio.toFixed(2)+' dispW='+Math.round(dispW)+' dispH='+Math.round(dispH)+' offsetX='+offsetX+' offsetY='+offsetY);
+
+    /* oneCell + ext 固定像素尺寸显示，不变形不偏左 */
     ws.addImage(imgId,{
-      tl:{col:col0+0.08, row:rowNumber-1+0.08},
-      br:{col:col0+0.92, row:rowNumber-1+0.92},
-      editAs:'twoCell'
+      tl:{col:col0+offsetX, row:rowNumber-1+offsetY},
+      ext:{width:dispW, height:dispH},
+      editAs:'oneCell'
     });
     console.log('[原图插入] 成功 row='+rowNumber+' col='+(col0===4?'E':'G')+' bufferLen='+buf.length);
     return true;
