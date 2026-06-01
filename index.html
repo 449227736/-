@@ -935,10 +935,25 @@ async function pushToGitHub(){
       throw new Error(ge.message||'HTTP '+getResp.status);
     }
 
-    // 第二步：上传
+    // 第二步：上传（剥离图片base64以减小体积，避免超过GitHub API限制）
+    var uploadData=records.map(function(r){
+      var item={};
+      for(var k in r){
+        if(r.hasOwnProperty(k)){
+          if(k==='images'||k==='deliverableImages'){
+            item[k]=(r[k]||[]).map(function(img){
+              return {name:img.name||'',data:''};
+            });
+          }else{
+            item[k]=r[k];
+          }
+        }
+      }
+      return item;
+    });
     var body={
       message:'更新跟踪表数据 '+new Date().toISOString(),
-      content:btoa(unescape(encodeURIComponent(JSON.stringify(records)))),
+      content:btoa(unescape(encodeURIComponent(JSON.stringify(uploadData)))),
       branch:'main'
     };
     if(fileInfo&&fileInfo.sha) body.sha=fileInfo.sha;
@@ -959,7 +974,10 @@ async function pushToGitHub(){
       throw new Error(pe.message||'HTTP '+putResp.status);
     }
 
-    toast('数据已成功上传到 GitHub！共 '+records.length+' 条记录','success');
+    toast('数据已成功上传到 GitHub！','success');
+    setTimeout(function(){
+      toast('其他人打开网站将自动加载最新数据。如需本地也同步，请点"重置为初始数据"','info');
+    },1500);
   } catch(err) {
     var msg=err.message||'';
     if(msg.indexOf('401')>-1 || msg.indexOf('Bad credentials')>-1 || msg.indexOf('403')>-1){
