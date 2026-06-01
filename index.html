@@ -1273,7 +1273,7 @@ async function doExportNormal(recs,bar){
     var fc=ws.getCell(info.row,info.col+1); // col+1 = Excel列号(1-based)
     console.log('[Excel导出] 处理图片 row='+info.row+' col='+(info.col===4?'E':'G')+' imgObj=', info.img);
     try{
-      var ok=await insertSquareImageToCell(wb, ws, info.img, info.row, info.col, 90);
+      var ok=await insertSquareImageToCell(wb, ws, info.img, info.row, info.col, 500, 90);
       if(ok){
         /* 图片插入成功：E列清空文字；G列保留原有文字（如果有） */
         if(info.col===4) fc.value='';
@@ -1313,7 +1313,7 @@ async function doExportNormal(recs,bar){
 
 /* 将图片处理成 size×size 的白底方形缩略图（不拉伸、不变形、居中） */
 function createSquareThumbnail(base64DataUrl, size){
-  size=size||90;
+  size=size||500;
   console.log('[缩略图] 开始生成', size+'x'+size, 'inputType='+typeof base64DataUrl, 'inputLen='+(typeof base64DataUrl==='string'?base64DataUrl.length:'N/A'));
   return new Promise(function(resolve, reject){
     var img=new Image();
@@ -1323,6 +1323,8 @@ function createSquareThumbnail(base64DataUrl, size){
       var canvas=document.createElement('canvas');
       canvas.width=size; canvas.height=size;
       var ctx=canvas.getContext('2d');
+      ctx.imageSmoothingEnabled=true;
+      ctx.imageSmoothingQuality='high';
       /* 白底 */
       ctx.fillStyle='#FFFFFF';
       ctx.fillRect(0,0,size,size);
@@ -1346,8 +1348,9 @@ function createSquareThumbnail(base64DataUrl, size){
 }
 
 /* 统一插图：将方形缩略图插入指定单元格（oneCell + ext 固定像素尺寸，不变形） */
-async function insertSquareImageToCell(wb, ws, imageObj, rowNumber, col0, thumbSize){
-  thumbSize=thumbSize||90;
+async function insertSquareImageToCell(wb, ws, imageObj, rowNumber, col0, imgRes, displaySize){
+  imgRes=imgRes||500;       /* 生成高清方形图的真实分辨率 */
+  displaySize=displaySize||90; /* Excel 中显示的像素尺寸 */
   /* 兼容多种图片数据格式 */
   var raw=imageObj;
   var data='';
@@ -1368,24 +1371,20 @@ async function insertSquareImageToCell(wb, ws, imageObj, rowNumber, col0, thumbS
     }
   }
   try{
-    var thumbBuf=await createSquareThumbnail(data, thumbSize);
-    console.log('[插图] 缩略图 buffer 长度='+thumbBuf.length);
+    var thumbBuf=await createSquareThumbnail(data, imgRes);
+    console.log('[插图] 高清方形图 buffer 长度='+thumbBuf.length, 'imgRes='+imgRes+'x'+imgRes);
     var imgId=wb.addImage({buffer:thumbBuf, extension:'png'});
     /*
-     * 关键：使用 oneCell + ext 固定像素尺寸
-     * twoCell 会拉伸图片匹配单元格宽高比 → 导致变形
-     * oneCell + ext 让图片保持原始像素比例，不被挤压
-     * 像素偏移居中计算：列宽16 ≈ 每列约 470px in Excel，thumbSize=90
+     * oneCell + ext 固定显示尺寸（90x90），图片本体是 500x500 高清
+     * 放大查看时仍然清晰
      */
-    var offsetPx=(480-thumbSize)/2;
-    var extOffY=Math.max(0,(860-thumbSize)/2);
     var ic=col0; // E列=4, G列=6 (0-based)
     ws.addImage(imgId,{
       tl:{col:ic+0.12, row:rowNumber-1+0.10},
-      ext:{width:thumbSize, height:thumbSize},
+      ext:{width:displaySize, height:displaySize},
       editAs:'oneCell'
     });
-    console.log('[插图] 插入成功 row='+rowNumber+' col='+(ic===4?'E':'G')+' size='+thumbSize+'x'+thumbSize);
+    console.log('[插图] 插入成功 row='+rowNumber+' col='+(ic===4?'E':'G')+' imgRes='+imgRes+'x'+imgRes+' display='+displaySize+'x'+displaySize);
     return true;
   }catch(e){
     console.log('[插图] 失败 row='+rowNumber+' col='+col0, e.message);
