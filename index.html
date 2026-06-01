@@ -345,7 +345,6 @@ body{
   <div class="header-actions">
     <button class="hbtn hbtn-primary" onclick="switchPage('add')">+ 新增记录</button>
     <button class="hbtn hbtn-outline" onclick="pushToGitHub()" id="btn-push-github" title="将当前数据上传到 GitHub 仓库">上传到 GitHub</button>
-    <button class="hbtn hbtn-outline" onclick="showTokenSetting()" id="btn-set-token" title="设置 GitHub Token">设置 Token</button>
     <div class="dropdown-wrap" id="export-dropdown">
       <button class="hbtn hbtn-outline" onclick="toggleExportDropdown(event)">导出 Excel ▾</button>
       <div class="dropdown-menu">
@@ -935,25 +934,10 @@ async function pushToGitHub(){
       throw new Error(ge.message||'HTTP '+getResp.status);
     }
 
-    // 第二步：上传（剥离图片base64以减小体积，避免超过GitHub API限制）
-    var uploadData=records.map(function(r){
-      var item={};
-      for(var k in r){
-        if(r.hasOwnProperty(k)){
-          if(k==='images'||k==='deliverableImages'){
-            item[k]=(r[k]||[]).map(function(img){
-              return {name:img.name||'',data:''};
-            });
-          }else{
-            item[k]=r[k];
-          }
-        }
-      }
-      return item;
-    });
+    // 第二步：上传
     var body={
       message:'更新跟踪表数据 '+new Date().toISOString(),
-      content:btoa(unescape(encodeURIComponent(JSON.stringify(uploadData)))),
+      content:btoa(unescape(encodeURIComponent(JSON.stringify(records)))),
       branch:'main'
     };
     if(fileInfo&&fileInfo.sha) body.sha=fileInfo.sha;
@@ -974,10 +958,7 @@ async function pushToGitHub(){
       throw new Error(pe.message||'HTTP '+putResp.status);
     }
 
-    toast('数据已成功上传到 GitHub！','success');
-    setTimeout(function(){
-      toast('其他人打开网站将自动加载最新数据。如需本地也同步，请点"重置为初始数据"','info');
-    },1500);
+    toast('数据已成功上传到 GitHub！共 '+records.length+' 条记录','success');
   } catch(err) {
     var msg=err.message||'';
     if(msg.indexOf('401')>-1 || msg.indexOf('Bad credentials')>-1 || msg.indexOf('403')>-1){
@@ -1013,31 +994,6 @@ function promptToken(){
     resolve(v);
   });
 }
-
-function showTokenSetting(){
-  var current=localStorage.getItem(GH_TOKEN_KEY)||'';
-  var t=prompt(
-    '设置 GitHub Token\n\n当前Token：'+(current?current.substring(0,8)+'...（已保存）':'未设置')+'\n\n'+
-    '请输入 ghp_ 开头的 Token（需要 repo 权限）\n'+
-    '留空则删除已保存的 Token',
-    current
-  );
-  if(t===null) return;
-  if(t.trim()){
-    localStorage.setItem(GH_TOKEN_KEY,t.trim());
-    toast('Token 已保存！现在可以正常上传到 GitHub 了','success');
-    document.getElementById('btn-set-token').textContent='Token 已设置';
-  }else{
-    localStorage.removeItem(GH_TOKEN_KEY);
-    toast('Token 已清除','success');
-    document.getElementById('btn-set-token').textContent='设置 Token';
-  }
-}
-(function(){
-  var saved=localStorage.getItem(GH_TOKEN_KEY);
-  var btn=document.getElementById('btn-set-token');
-  if(btn&&saved) btn.textContent='Token 已设置';
-})();
 
 /* ============ 重置为初始数据 ============ */
 function restoreBackup(){
@@ -1180,7 +1136,7 @@ async function doExportNormal(recs,bar){
     {width:12},  // D 问题类型
     {width:22},  // E 图片/视频
     {width:30},  // F 解决措施
-    {width:22},  // G 交付物(含图片)
+    {width:18},  // G 交付物
     {width:12},  // H 责任人
     {width:12},  // I 协助人
     {width:14},  // J 计划完成时间
@@ -1257,85 +1213,38 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── 9. SECOND PASS: write data values, collect images for drawing ─── */
+  /* ─── 9. SECOND PASS: write data values only (do NOT touch fill/font/border) ─── */
   var imgQueue=[];
   for(var i=0;i<recs.length;i++){
     var r=recs[i];
     var rn=dataStartRow+i;
 
-    /* 行高 */
-    var hasImgE=r.images&&r.images.length>0;
-    var hasImgG=r.deliverableImages&&r.deliverableImages.length>0;
-    ws.getRow(rn).height=(hasImgE||hasImgG)?90:60;
+    /* 如果该行有图片，行高设为90；否则60 */
+    var hasImg=(r.images&&r.images.length>0)||(r.deliverableImages&&r.deliverableImages.length>0);
+    ws.getRow(rn).height=hasImg?90:60;
 
-    /* 写入文本字段 */
-    ws.getCell(rn,1).value=i+1;
-    ws.getCell(rn,2).value=r.reporter||'';
-    ws.getCell(rn,3).value=r.description||'';
-    ws.getCell(rn,4).value=r.problemType||'';
-    ws.getCell(rn,6).value=r.solution||'';
-    ws.getCell(rn,8).value=r.responsible||'';
-    ws.getCell(rn,9).value=r.assistant||'';
-    ws.getCell(rn,10).value=fmtDate(r.plannedDate);
-    ws.getCell(rn,11).value=r.status||'';
-    ws.getCell(rn,12).value=fmtDate(r.actualDate);
-    ws.getCell(rn,13).value=r.remarks||'';
-
-    /* E列(5): 图片/视频 */
-    var eCell=ws.getCell(rn,5);
-    if(hasImgE){
-      var eImg=r.images[0].data;
-      if(eImg&&eImg.indexOf('data:image')===0){
-        eCell.value='';
-        imgQueue.push({row:rn,img:r.images[0],col:4});
-      }else{
-        eCell.value='有附件';
-      }
-    }else{
-      eCell.value='';
+    var vals=[
+      i+1,r.reporter||'',r.description||'',r.problemType||'','',
+      r.solution||'',r.deliverable||'',r.responsible||'',r.assistant||'',
+      fmtDate(r.plannedDate),r.status||'',fmtDate(r.actualDate),r.remarks||''
+    ];
+    for(var c=0;c<13;c++){
+      if(c!==4) ws.getCell(rn,c+1).value=vals[c];
     }
+    /* E列(图片列)文本始终留空，禁止写入ID/base64 */
+    ws.getCell(rn,5).value='';
 
-    /* G列(7): 交付物 — 文字优先，无文字且有图片时插入图片 */
-    var gCell=ws.getCell(rn,7);
-    var gText=(r.deliverable||'').trim();
-    if(gText){
-      gCell.value=gText;
-    }else if(hasImgG){
-      var gImg=r.deliverableImages[0].data;
-      if(gImg&&gImg.indexOf('data:image')===0){
-        gCell.value='';
-        imgQueue.push({row:rn,img:r.deliverableImages[0],col:6});
-      }else{
-        gCell.value='有附件';
-      }
-    }else{
-      gCell.value='';
+    /* collect images — E列(images)和G列(deliverableImages)分别处理 */
+    if(r.images&&r.images.length>0){
+      var eImgData=r.images[0].data||'';
+      console.log('[Excel导出] E列图片 rn='+rn, 'dataLen='+eImgData.length);
+      imgQueue.push({row:rn,img:r.images[0],col:4}); // E列
     }
-  }
-
-  /* ─── 9.5 Insert images as drawing (twoCell: move and resize with cell) ─── */
-  for(var ii=0;ii<imgQueue.length;ii++){
-    var info=imgQueue[ii];
-    var fc=ws.getCell(info.row,info.col+1);
-    try{
-      var imgData=info.img.data;
-      if(!imgData||typeof imgData!=='string'||imgData.indexOf('data:image')!==0)throw new Error('empty');
-      var ext=imgData.indexOf('data:image/jpeg')===0?'jpeg':'png';
-      var b64=imgData.split(',')[1];
-      if(!b64)throw new Error('bad format');
-      var buf=b64ToBuffer(b64);
-      var imgId=wb.addImage({buffer:buf,extension:ext});
-      ws.addImage(imgId,{
-        tl:{col:info.col+0.08,row:info.row-1+0.08},
-        br:{col:info.col+0.92,row:info.row-1+0.92},
-        editAs:'twoCell'
-      });
-      fc.value='';
-    }catch(e){
-      fc.value='有附件';
-      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FF666666'}};
-      fc.border=borderStyle;
-      fc.alignment=centerAlign;
+    if(r.deliverableImages&&r.deliverableImages.length>0){
+      var gImgData=r.deliverableImages[0].data||'';
+      var gText=(r.deliverable||'').trim();
+      console.log('[Excel导出] G列图片 rn='+rn, 'dataLen='+gImgData.length, 'hasText='+!!gText);
+      imgQueue.push({row:rn,img:r.deliverableImages[0],col:6}); // G列
     }
   }
 
@@ -1361,7 +1270,39 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── Download ─── */
+  /* ─── 11. Insert images (twoCell: 随单元格移动和调整大小) ─── */
+  for(var ii=0;ii<imgQueue.length;ii++){
+    var info=imgQueue[ii];
+    var fc=ws.getCell(info.row,info.col+1); // col+1 = Excel列号(1-based)
+    try{
+      var imgData=info.img.data;
+      if(!imgData||typeof imgData!=='string'||imgData.indexOf('data:image')!==0)throw new Error('empty');
+      var ext=imgData.indexOf('data:image/jpeg')===0?'jpeg':'png';
+      var b64=imgData.split(',')[1];
+      if(!b64)throw new Error('bad format');
+      var buf=b64ToBuffer(b64);
+      var imgId=wb.addImage({buffer:buf,extension:ext});
+      /* twoCell 锚定：使用 info.col 动态定位，E列col=4, G列col=6 */
+      var ic=info.col; // 4=E列, 6=G列
+      ws.addImage(imgId,{
+        tl:{col:ic+0.08,row:info.row-1+0.08},
+        br:{col:ic+0.92,row:info.row-1+0.92},
+        editAs:'twoCell'
+      });
+      /* 单元格文本留空，不写任何内容 */
+      fc.value='';
+      console.log('[Excel导出] 图片成功:', info.row, '行', ic===4?'E列':'G列');
+    }catch(e){
+      /* 无法插入图片时显示"有附件" */
+      fc.value='有附件';
+      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FF666666'}};
+      fc.border=borderStyle;
+      fc.alignment=centerAlign;
+      console.log('[Excel导出] 图片失败:', info.row, '行', e.message);
+    }
+  }
+
+  /* ─── 12. Download ─── */
   bar.textContent='正在生成下载文件...';
   var wbBuffer=await wb.xlsx.writeBuffer();
   var blob=new Blob([wbBuffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
