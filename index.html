@@ -1133,7 +1133,7 @@ async function doExportNormal(recs,bar){
     {width:12},  // B 问题提出人
     {width:30},  // C 异常问题描述
     {width:12},  // D 问题类型
-    {width:22},  // E 图片/视频
+    {width:18},  // E 图片/视频
     {width:30},  // F 解决措施
     {width:18},  // G 交付物
     {width:12},  // H 责任人
@@ -1218,9 +1218,9 @@ async function doExportNormal(recs,bar){
     var r=recs[i];
     var rn=dataStartRow+i;
 
-    /* 如果该行有图片，行高设为90；否则60 */
+    /* 如果该行有图片，行高设为85；否则60 */
     var hasImg=(r.images&&r.images.length>0)||(r.deliverableImages&&r.deliverableImages.length>0);
-    ws.getRow(rn).height=hasImg?90:60;
+    ws.getRow(rn).height=hasImg?85:60;
 
     var vals=[
       i+1,r.reporter||'',r.description||'',r.problemType||'','',
@@ -1235,15 +1235,13 @@ async function doExportNormal(recs,bar){
 
     /* collect images — E列(images)和G列(deliverableImages)分别处理 */
     if(r.images&&r.images.length>0){
-      var eImgData=r.images[0].data||'';
-      console.log('[Excel导出] E列图片 rn='+rn, 'dataLen='+eImgData.length);
-      imgQueue.push({row:rn,img:r.images[0],col:4}); // E列
+      console.log('[Excel导出] E列图片 rn='+rn, 'name='+(r.images[0].name||''));
+      imgQueue.push({row:rn,img:r.images[0],col:4, field:'images'});
     }
     if(r.deliverableImages&&r.deliverableImages.length>0){
-      var gImgData=r.deliverableImages[0].data||'';
       var gText=(r.deliverable||'').trim();
-      console.log('[Excel导出] G列图片 rn='+rn, 'dataLen='+gImgData.length, 'hasText='+!!gText);
-      imgQueue.push({row:rn,img:r.deliverableImages[0],col:6}); // G列
+      console.log('[Excel导出] G列图片 rn='+rn, 'hasText='+!!gText, 'name='+(r.deliverableImages[0].name||''));
+      imgQueue.push({row:rn,img:r.deliverableImages[0],col:6, field:'deliverableImages', hasText:!!gText});
     }
   }
 
@@ -1269,28 +1267,19 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── 11. Insert images (twoCell: 随单元格移动和调整大小) ─── */
+  /* ─── 11. Insert images (方形缩略图 + twoCell 居中锚定) ─── */
   for(var ii=0;ii<imgQueue.length;ii++){
     var info=imgQueue[ii];
     var fc=ws.getCell(info.row,info.col+1); // col+1 = Excel列号(1-based)
     try{
-      var imgData=info.img.data;
-      if(!imgData||typeof imgData!=='string'||imgData.indexOf('data:image')!==0)throw new Error('empty');
-      var ext=imgData.indexOf('data:image/jpeg')===0?'jpeg':'png';
-      var b64=imgData.split(',')[1];
-      if(!b64)throw new Error('bad format');
-      var buf=b64ToBuffer(b64);
-      var imgId=wb.addImage({buffer:buf,extension:ext});
-      /* twoCell 锚定：使用 info.col 动态定位，E列col=4, G列col=6 */
-      var ic=info.col; // 4=E列, 6=G列
-      ws.addImage(imgId,{
-        tl:{col:ic+0.08,row:info.row-1+0.08},
-        br:{col:ic+0.92,row:info.row-1+0.92},
-        editAs:'twoCell'
-      });
-      /* 单元格文本留空，不写任何内容 */
-      fc.value='';
-      console.log('[Excel导出] 图片成功:', info.row, '行', ic===4?'E列':'G列');
+      var ok=await insertSquareImageToCell(wb, ws, info.img, info.row, info.col);
+      if(ok){
+        /* 图片插入成功：单元格文本留空（G列如果原本有文字，文字已被写入vals，图片叠加显示） */
+        fc.value='';
+        console.log('[Excel导出] 方形缩略图成功:', info.row, '行', info.col===4?'E列':'G列');
+      }else{
+        throw new Error('no valid image data');
+      }
     }catch(e){
       /* 无法插入图片时显示"有附件" */
       fc.value='有附件';
@@ -1317,6 +1306,58 @@ async function doExportNormal(recs,bar){
   bar.textContent='导出成功！';
   setTimeout(function(){bar.classList.remove('show')},2000);
   toast('Excel 导出成功！共 '+recs.length+' 条','success');
+}
+
+/* ============ SQUARE THUMBNAIL + CELL INSERT HELPERS ============ */
+
+/* 将图片处理成 size×size 的白底方形缩略图（不拉伸、不变形、居中） */
+function createSquareThumbnail(base64DataUrl, size){
+  size=size||100;
+  return new Promise(function(resolve, reject){
+    var img=new Image();
+    img.onload=function(){
+      var canvas=document.createElement('canvas');
+      canvas.width=size; canvas.height=size;
+      var ctx=canvas.getContext('2d');
+      /* 白底 */
+      ctx.fillStyle='#FFFFFF';
+      ctx.fillRect(0,0,size,size);
+      /* 等比例缩放计算 */
+      var iw=img.naturalWidth, ih=img.naturalHeight;
+      var scale=Math.min(size/iw, size/ih);
+      var dw=iw*scale, dh=ih*scale;
+      var dx=(size-dw)/2, dy=(size-dh)/2;
+      /* 居中绘制 */
+      ctx.drawImage(img, dx, dy, dw, dh);
+      /* 输出 PNG buffer */
+      var dataUrl=canvas.toDataURL('image/png');
+      var b64Part=dataUrl.split(',')[1];
+      if(!b64Part){reject(new Error('canvas toDataURL failed'));return;}
+      resolve(b64ToBuffer(b64Part));
+    };
+    img.onerror=function(){reject(new Error('image load error'));};
+    img.src=base64DataUrl;
+  });
+}
+
+/* 统一插图：将方形缩略图插入指定单元格（twoCell 居中锚定） */
+async function insertSquareImageToCell(wb, ws, imageObj, rowNumber, col0){
+  var data=imageObj?imageObj.data:'';
+  if(!data||typeof data!=='string'||data.indexOf('data:image')!==0) return false;
+  try{
+    var thumbBuf=await createSquareThumbnail(data, 100);
+    var imgId=wb.addImage({buffer:thumbBuf, extension:'png'});
+    var ic=col0; // E列=4, G列=6
+    ws.addImage(imgId,{
+      tl:{col:ic+0.15, row:rowNumber-1+0.10},
+      br:{col:ic+0.85, row:rowNumber-1+0.90},
+      editAs:'twoCell'
+    });
+    return true;
+  }catch(e){
+    console.log('[insertSquareImageToCell] 失败 row='+rowNumber+' col='+col0, e.message);
+    return false;
+  }
 }
 
 /* ============ SHARED EXCEL HELPERS ============ */
