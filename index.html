@@ -1134,7 +1134,7 @@ async function doExportNormal(recs,bar){
     {width:12},  // B 问题提出人
     {width:30},  // C 异常问题描述
     {width:12},  // D 问题类型
-    {width:18},  // E 图片/视频
+    {width:22},  // E 图片/视频
     {width:30},  // F 解决措施
     {width:18},  // G 交付物
     {width:12},  // H 责任人
@@ -1218,7 +1218,10 @@ async function doExportNormal(recs,bar){
   for(var i=0;i<recs.length;i++){
     var r=recs[i];
     var rn=dataStartRow+i;
-    ws.getRow(rn).height=60;
+
+    /* 如果该行有图片，行高设为90；否则60 */
+    var hasImg=(r.images&&r.images.length>0)||(r.deliverableImages&&r.deliverableImages.length>0);
+    ws.getRow(rn).height=hasImg?90:60;
 
     var vals=[
       i+1,r.reporter||'',r.description||'',r.problemType||'','',
@@ -1228,17 +1231,14 @@ async function doExportNormal(recs,bar){
     for(var c=0;c<13;c++){
       if(c!==4) ws.getCell(rn,c+1).value=vals[c];
     }
+    /* E列(图片列)文本始终留空，禁止写入ID/base64 */
+    ws.getCell(rn,5).value='';
 
-    /* collect images */
+    /* collect images — 只取第一张，避免多图重叠 */
     if(r.images&&r.images.length>0){
-      for(var mi=0;mi<r.images.length;mi++){
-        imgQueue.push({row:rn,img:r.images[mi],col:4});
-      }
-    }
-    if(r.deliverableImages&&r.deliverableImages.length>0){
-      for(var di=0;di<r.deliverableImages.length;di++){
-        imgQueue.push({row:rn,img:r.deliverableImages[di],col:6});
-      }
+      imgQueue.push({row:rn,img:r.images[0],col:4});
+    }else if(r.deliverableImages&&r.deliverableImages.length>0){
+      imgQueue.push({row:rn,img:r.deliverableImages[0],col:4});
     }
   }
 
@@ -1264,30 +1264,31 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── 11. Insert images ─── */
-  var MAX_IMG_W=120,MAX_IMG_H=90;
+  /* ─── 11. Insert images (twoCell: 随单元格移动和调整大小) ─── */
+  var IMG_COL=4; // E列 ExcelJS 0基坐标
   for(var ii=0;ii<imgQueue.length;ii++){
     var info=imgQueue[ii];
+    var fc=ws.getCell(info.row,info.col+1); // col+1 = Excel列号(1-based)
     try{
       var imgData=info.img.data;
-      if(!imgData)throw new Error('empty');
+      if(!imgData||typeof imgData!=='string'||imgData.indexOf('data:image')!==0)throw new Error('empty');
       var ext=imgData.indexOf('data:image/jpeg')===0?'jpeg':'png';
       var b64=imgData.split(',')[1];
       if(!b64)throw new Error('bad format');
       var buf=b64ToBuffer(b64);
       var imgId=wb.addImage({buffer:buf,extension:ext});
-      var w=info.img.width||320,h=info.img.height||240;
-      if(w>MAX_IMG_W){h=h*(MAX_IMG_W/w);w=MAX_IMG_W}
-      if(h>MAX_IMG_H){w=w*(MAX_IMG_H/h);h=MAX_IMG_H}
+      /* twoCell 锚定：图片绑定到单元格，排序/筛选时随行移动 */
       ws.addImage(imgId,{
-        tl:{col:info.col,row:info.row-1},
-        ext:{width:Math.round(w),height:Math.round(h)},
-        editAs:'oneCell'
+        tl:{col:IMG_COL+0.08,row:info.row-1+0.08},
+        br:{col:IMG_COL+0.92,row:info.row-1+0.92},
+        editAs:'twoCell'
       });
+      /* E列文本留空，不写任何内容 */
+      fc.value='';
     }catch(e){
-      var fc=ws.getCell(info.row,info.col+1);
-      fc.value='图片导出失败';
-      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FFFF0000'}};
+      /* 无法插入图片时显示"有附件" */
+      fc.value='有附件';
+      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FF666666'}};
       fc.border=borderStyle;
       fc.alignment=centerAlign;
     }
