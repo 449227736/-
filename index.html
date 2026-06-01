@@ -345,6 +345,7 @@ body{
   <div class="header-actions">
     <button class="hbtn hbtn-primary" onclick="switchPage('add')">+ 新增记录</button>
     <button class="hbtn hbtn-outline" onclick="pushToGitHub()" id="btn-push-github" title="将当前数据上传到 GitHub 仓库">上传到 GitHub</button>
+    <button class="hbtn hbtn-outline" onclick="showTokenSetting()" id="btn-set-token" title="设置 GitHub Token">设置 Token</button>
     <div class="dropdown-wrap" id="export-dropdown">
       <button class="hbtn hbtn-outline" onclick="toggleExportDropdown(event)">导出 Excel ▾</button>
       <div class="dropdown-menu">
@@ -994,6 +995,31 @@ function promptToken(){
     resolve(v);
   });
 }
+
+function showTokenSetting(){
+  var current=localStorage.getItem(GH_TOKEN_KEY)||'';
+  var t=prompt(
+    '设置 GitHub Token\n\n当前Token：'+(current?current.substring(0,8)+'...（已保存）':'未设置')+'\n\n'+
+    '请输入 ghp_ 开头的 Token（需要 repo 权限）\n'+
+    '留空则删除已保存的 Token',
+    current
+  );
+  if(t===null) return;
+  if(t.trim()){
+    localStorage.setItem(GH_TOKEN_KEY,t.trim());
+    toast('Token 已保存！现在可以正常上传到 GitHub 了','success');
+    document.getElementById('btn-set-token').textContent='Token 已设置';
+  }else{
+    localStorage.removeItem(GH_TOKEN_KEY);
+    toast('Token 已清除','success');
+    document.getElementById('btn-set-token').textContent='设置 Token';
+  }
+}
+(function(){
+  var saved=localStorage.getItem(GH_TOKEN_KEY);
+  var btn=document.getElementById('btn-set-token');
+  if(btn&&saved) btn.textContent='Token 已设置';
+})();
 
 /* ============ 重置为初始数据 ============ */
 function restoreBackup(){
