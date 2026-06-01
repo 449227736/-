@@ -1166,6 +1166,55 @@ function b64ToBuffer(b64){
   return bytes.buffer;
 }
 
+/* ============ IMAGE UPLOAD HELPERS (for IMAGE formula) ============ */
+function imgHash(dataUri){
+  var b64=(dataUri||'').split(',')[1]||'';
+  var h=0;
+  for(var i=0;i<Math.min(b64.length,500);i++){h=((h<<5)-h+b64.charCodeAt(i))|0}
+  return 'img_'+Math.abs(h).toString(36);
+}
+function loadImgForExport(src){return new Promise(function(ok,no){var i=new Image();i.onload=function(){ok(i)};i.onerror=function(){no(new Error('load fail'))};i.src=src})}
+async function thumbPngBase64(dataUri,maxSz){
+  var img=await loadImgForExport(dataUri);
+  var w=img.width,h=img.height;
+  if(w>maxSz||h>maxSz){if(w>h){h=h*maxSz/w;w=maxSz}else{w=w*maxSz/h;h=maxSz}}
+  var c=document.createElement('canvas');c.width=Math.round(w);c.height=Math.round(h);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+  return c.toDataURL('image/png').split(',')[1];
+}
+async function uploadOneImg(b64Png,hash,token){
+  var apiUrl='https://api.github.com/repos/'+GH_OWNER+'/'+GH_REPO+'/contents/images/'+hash+'.png';
+  var auth='token '+token;
+  var sha=null;
+  try{var r=await fetch(apiUrl,{headers:{'Authorization':auth,'User-Agent':'TrackerApp'}});if(r.ok){var d=await r.json();sha=d.sha}}catch(e){}
+  var body={message:'导出图片 '+hash,content:b64Png,branch:'main'};
+  if(sha)body.sha=sha;
+  var r2=await fetch(apiUrl,{method:'PUT',headers:{'Authorization':auth,'Content-Type':'application/json','User-Agent':'TrackerApp'},body:JSON.stringify(body)});
+  if(r2.ok)return 'https://raw.githubusercontent.com/'+GH_OWNER+'/'+GH_REPO+'/main/images/'+hash+'.png';
+  return null;
+}
+async function prepareImageUrls(recs,token,bar){
+  var cache={};
+  var queue=[];
+  var seen={};
+  for(var i=0;i<recs.length;i++){
+    var r=recs[i];
+    (r.images||[]).forEach(function(im){var d=im.data;if(d&&d.indexOf('data:image')===0){var h=imgHash(d);if(!seen[h]){seen[h]=true;queue.push({data:d,hash:h})}}});
+    (r.deliverableImages||[]).forEach(function(im){var d=im.data;if(d&&d.indexOf('data:image')===0){var h=imgHash(d);if(!seen[h]){seen[h]=true;queue.push({data:d,hash:h})}}});
+  }
+  if(queue.length===0)return cache;
+  bar.textContent='正在上传图片到GitHub...（共'+queue.length+'张）';
+  var bs=3;
+  for(var b=0;b<queue.length;b+=bs){
+    var batch=queue.slice(b,b+bs);
+    await Promise.all(batch.map(async function(item){
+      try{var png=await thumbPngBase64(item.data,300);var url=await uploadOneImg(png,item.hash,token);if(url){cache[item.hash]=url}}catch(e){}
+    }));
+    bar.textContent='正在上传图片...'+Math.min(b+bs,queue.length)+'/'+queue.length;
+  }
+  return cache;
+}
+
 async function doExportNormal(recs,bar){
 
   /* ─── 1. Create fresh workbook ─── */
@@ -1180,7 +1229,7 @@ async function doExportNormal(recs,bar){
     {width:12},  // D 问题类型
     {width:22},  // E 图片/视频
     {width:30},  // F 解决措施
-    {width:18},  // G 交付物
+    {width:22},  // G 交付物(含图片)
     {width:12},  // H 责任人
     {width:12},  // I 协助人
     {width:14},  // J 计划完成时间
@@ -1257,32 +1306,72 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── 9. SECOND PASS: write data values only (do NOT touch fill/font/border) ─── */
-  var imgQueue=[];
+  /* ─── 8.5 Upload images to GitHub for IMAGE() formula ─── */
+  var token=localStorage.getItem(GH_TOKEN_KEY)||'';
+  bar.textContent='准备图片...';
+  var imgUrlMap=await prepareImageUrls(recs,token,bar);
+
+  /* ─── 9. SECOND PASS: write data values + IMAGE() formulas ─── */
   for(var i=0;i<recs.length;i++){
     var r=recs[i];
     var rn=dataStartRow+i;
 
-    /* 如果该行有图片，行高设为90；否则60 */
-    var hasImg=(r.images&&r.images.length>0)||(r.deliverableImages&&r.deliverableImages.length>0);
-    ws.getRow(rn).height=hasImg?90:60;
+    /* 行高：有图片90，无图片60 */
+    var hasImgE=r.images&&r.images.length>0;
+    var hasImgG=r.deliverableImages&&r.deliverableImages.length>0;
+    ws.getRow(rn).height=(hasImgE||hasImgG)?90:60;
 
-    var vals=[
-      i+1,r.reporter||'',r.description||'',r.problemType||'','',
-      r.solution||'',r.deliverable||'',r.responsible||'',r.assistant||'',
-      fmtDate(r.plannedDate),r.status||'',fmtDate(r.actualDate),r.remarks||''
-    ];
-    for(var c=0;c<13;c++){
-      if(c!==4) ws.getCell(rn,c+1).value=vals[c];
+    /* 写入文本字段 */
+    ws.getCell(rn,1).value=i+1;
+    ws.getCell(rn,2).value=r.reporter||'';
+    ws.getCell(rn,3).value=r.description||'';
+    ws.getCell(rn,4).value=r.problemType||'';
+    ws.getCell(rn,6).value=r.solution||'';
+    ws.getCell(rn,8).value=r.responsible||'';
+    ws.getCell(rn,9).value=r.assistant||'';
+    ws.getCell(rn,10).value=fmtDate(r.plannedDate);
+    ws.getCell(rn,11).value=r.status||'';
+    ws.getCell(rn,12).value=fmtDate(r.actualDate);
+    ws.getCell(rn,13).value=r.remarks||'';
+
+    /* ── E列(5): 图片/视频 — 用 IMAGE() 公式 ── */
+    var eCell=ws.getCell(rn,5);
+    if(hasImgE){
+      var eImg=r.images[0].data;
+      if(eImg&&eImg.indexOf('data:image')===0){
+        var eHash=imgHash(eImg);
+        var eUrl=imgUrlMap[eHash];
+        if(eUrl){
+          eCell.value={formula:'IMAGE("'+eUrl+'")'};
+        }else{
+          eCell.value='有附件';
+        }
+      }else{
+        eCell.value='有附件';
+      }
+    }else{
+      eCell.value='';
     }
-    /* E列(图片列)文本始终留空，禁止写入ID/base64 */
-    ws.getCell(rn,5).value='';
 
-    /* collect images — 只取第一张，避免多图重叠 */
-    if(r.images&&r.images.length>0){
-      imgQueue.push({row:rn,img:r.images[0],col:4});
-    }else if(r.deliverableImages&&r.deliverableImages.length>0){
-      imgQueue.push({row:rn,img:r.deliverableImages[0],col:4});
+    /* ── G列(7): 交付物 — 文字保留，图片用 IMAGE() ── */
+    var gCell=ws.getCell(rn,7);
+    var gText=(r.deliverable||'').trim();
+    if(hasImgG){
+      var gImg=r.deliverableImages[0].data;
+      var gUrl=null;
+      if(gImg&&gImg.indexOf('data:image')===0){
+        var gHash=imgHash(gImg);
+        gUrl=imgUrlMap[gHash]||null;
+      }
+      if(gText){
+        gCell.value=gText; /* 有文字+图片：保留文字，图片无法同单元格 */
+      }else if(gUrl){
+        gCell.value={formula:'IMAGE("'+gUrl+'")'};
+      }else{
+        gCell.value='有附件';
+      }
+    }else{
+      gCell.value=gText;
     }
   }
 
@@ -1308,37 +1397,7 @@ async function doExportNormal(recs,bar){
     }
   }
 
-  /* ─── 11. Insert images (twoCell: 随单元格移动和调整大小) ─── */
-  var IMG_COL=4; // E列 ExcelJS 0基坐标
-  for(var ii=0;ii<imgQueue.length;ii++){
-    var info=imgQueue[ii];
-    var fc=ws.getCell(info.row,info.col+1); // col+1 = Excel列号(1-based)
-    try{
-      var imgData=info.img.data;
-      if(!imgData||typeof imgData!=='string'||imgData.indexOf('data:image')!==0)throw new Error('empty');
-      var ext=imgData.indexOf('data:image/jpeg')===0?'jpeg':'png';
-      var b64=imgData.split(',')[1];
-      if(!b64)throw new Error('bad format');
-      var buf=b64ToBuffer(b64);
-      var imgId=wb.addImage({buffer:buf,extension:ext});
-      /* twoCell 锚定：图片绑定到单元格，排序/筛选时随行移动 */
-      ws.addImage(imgId,{
-        tl:{col:IMG_COL+0.08,row:info.row-1+0.08},
-        br:{col:IMG_COL+0.92,row:info.row-1+0.92},
-        editAs:'twoCell'
-      });
-      /* E列文本留空，不写任何内容 */
-      fc.value='';
-    }catch(e){
-      /* 无法插入图片时显示"有附件" */
-      fc.value='有附件';
-      fc.font={name:'Microsoft YaHei',size:9,color:{argb:'FF666666'}};
-      fc.border=borderStyle;
-      fc.alignment=centerAlign;
-    }
-  }
-
-  /* ─── 12. Download ─── */
+  /* ─── Download ─── */
   bar.textContent='正在生成下载文件...';
   var wbBuffer=await wb.xlsx.writeBuffer();
   var blob=new Blob([wbBuffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
