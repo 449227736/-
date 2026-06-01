@@ -314,6 +314,25 @@ body{
   .app-header{flex-direction:column;height:auto;padding:12px 16px;gap:10px}
   .stats-row{grid-template-columns:repeat(2,1fr)}
 }
+
+/* ====== DROPDOWN EXPORT BUTTON ====== */
+.dropdown-wrap{position:relative;display:inline-flex}
+.dropdown-menu{
+  display:none;position:absolute;top:calc(100% + 4px);right:0;z-index:200;
+  background:#1e293b;border:1px solid #475569;border-radius:var(--radius-sm);
+  min-width:210px;box-shadow:0 8px 24px rgba(0,0,0,.3);overflow:hidden;
+}
+.dropdown-wrap.open .dropdown-menu{display:block}
+.dropdown-item{
+  display:block;width:100%;padding:10px 16px;
+  text-align:left;background:transparent;border:none;
+  color:#cbd5e1;font-size:13px;font-family:inherit;cursor:pointer;
+  transition:background .15s;white-space:nowrap;
+}
+.dropdown-item:hover{background:#334155;color:#fff}
+.dropdown-item .item-sub{font-size:11px;color:#64748b;margin-top:2px}
+.dropdown-item:hover .item-sub{color:#94a3b8}
+.dropdown-item+.dropdown-item{border-top:1px solid #334155}
 </style>
 </head>
 <body>
@@ -326,7 +345,19 @@ body{
   <div class="header-actions">
     <button class="hbtn hbtn-primary" onclick="switchPage('add')">+ 新增记录</button>
     <button class="hbtn hbtn-outline" onclick="pushToGitHub()" id="btn-push-github" title="将当前数据上传到 GitHub 仓库">上传到 GitHub</button>
-    <button class="hbtn hbtn-outline" onclick="exportExcel()">导出 Excel</button>
+    <div class="dropdown-wrap" id="export-dropdown">
+      <button class="hbtn hbtn-outline" onclick="toggleExportDropdown(event)">导出 Excel ▾</button>
+      <div class="dropdown-menu">
+        <button class="dropdown-item" onclick="exportNormal()">
+          正常数据导出
+          <div class="item-sub">导出当前问题跟踪明细表</div>
+        </button>
+        <button class="dropdown-item" onclick="exportAnalysis()">
+          数据分析导出（复盘资料）
+          <div class="item-sub">生成多 Sheet 复盘分析资料</div>
+        </button>
+      </div>
+    </div>
     <button class="hbtn hbtn-outline" onclick="exportJSON()">导出 JSON</button>
     <button class="hbtn hbtn-outline" onclick="document.getElementById('import-file').click()">导入 JSON</button>
     <button class="hbtn hbtn-outline" onclick="restoreBackup()" id="btn-restore">重置为初始数据</button>
@@ -396,7 +427,7 @@ body{
     <div class="table-wrap">
       <div class="table-header">
         <h3>数据列表 <span class="count" id="table-count"></span></h3>
-        <button class="btn btn-primary btn-sm" onclick="exportExcel()">导出 Excel</button>
+        <button class="btn btn-primary btn-sm" onclick="exportNormal()">导出 Excel</button>
       </div>
       <div class="table-scroll">
         <table class="data-table">
@@ -871,8 +902,6 @@ var GH_TOKEN_KEY='github_pat_tracker';
 
 async function pushToGitHub(){
   var btn=document.getElementById('btn-push-github');
-
-  // 循环获取有效 Token，直到用户取消或成功
   var token=localStorage.getItem(GH_TOKEN_KEY)||'';
   if(!token.trim()){
     token=await promptToken();
@@ -885,20 +914,27 @@ async function pushToGitHub(){
 
   try {
     var apiUrl='https://api.github.com/repos/'+GH_OWNER+'/'+GH_REPO+'/contents/'+GH_FILE;
-    var headers={'Authorization':'token '+token,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'};
+    var authHeader='token '+token.trim();
 
-    // 获取文件 SHA
-    var getResp=await fetch(apiUrl,{headers:headers,method:'GET'});
+    // 第一步：获取文件 SHA
+    var getResp=await fetch(apiUrl,{
+      method:'GET',
+      headers:{
+        'Authorization':authHeader,
+        'Accept':'application/vnd.github.v3+json',
+        'User-Agent':'TrackerApp'
+      }
+    });
+
     var fileInfo=null;
     if(getResp.ok){
       fileInfo=await getResp.json();
     } else if(getResp.status!==404){
-      // 404 表示文件不存在，可以创建；其他错误抛异常
-      var errData=await getResp.json().catch(function(){return {}});
-      throw new Error(errData.message||'HTTP '+getResp.status);
+      var ge=await getResp.json().catch(function(){return {}});
+      throw new Error(ge.message||'HTTP '+getResp.status);
     }
 
-    // 上传
+    // 第二步：上传
     var body={
       message:'更新跟踪表数据 '+new Date().toISOString(),
       content:btoa(unescape(encodeURIComponent(JSON.stringify(records)))),
@@ -906,41 +942,43 @@ async function pushToGitHub(){
     };
     if(fileInfo&&fileInfo.sha) body.sha=fileInfo.sha;
 
-    var putResp=await fetch(apiUrl,{method:'PUT',headers:headers,body:JSON.stringify(body)});
+    var putResp=await fetch(apiUrl,{
+      method:'PUT',
+      headers:{
+        'Authorization':authHeader,
+        'Accept':'application/vnd.github.v3+json',
+        'Content-Type':'application/json',
+        'User-Agent':'TrackerApp'
+      },
+      body:JSON.stringify(body)
+    });
+
     if(!putResp.ok){
-      var errData=await putResp.json().catch(function(){return {}});
-      throw new Error(errData.message||'HTTP '+putResp.status);
+      var pe=await putResp.json().catch(function(){return {}});
+      throw new Error(pe.message||'HTTP '+putResp.status);
     }
 
     toast('数据已成功上传到 GitHub！共 '+records.length+' 条记录','success');
   } catch(err) {
     var msg=err.message||'';
-    if(msg.indexOf('401')>-1 || msg.indexOf('Bad credentials')>-1){
-      toast('Token 无效或已过期，请重新输入','error');
+    if(msg.indexOf('401')>-1 || msg.indexOf('Bad credentials')>-1 || msg.indexOf('403')>-1){
+      toast('Token 无效或权限不足，请重新输入','error');
       localStorage.removeItem(GH_TOKEN_KEY);
-      // 自动重新弹出输入框
-      setTimeout(function(){ pushToGitHub(); }, 500);
+      setTimeout(function(){ pushToGitHub(); },600);
       btn.textContent='上传到 GitHub'; btn.disabled=false;
       return;
-    } else if(msg.indexOf('403')>-1){
-      toast('Token 权限不足，需要勾选 repo 权限','error');
-      localStorage.removeItem(GH_TOKEN_KEY);
-      setTimeout(function(){ pushToGitHub(); }, 500);
-      btn.textContent='上传到 GitHub'; btn.disabled=false;
-      return;
-    } else {
-      toast('上传失败：'+msg,'error');
     }
+    toast('上传失败：'+msg,'error');
   } finally {
-    if(btn.textContent!=='上传中...') return; // 已在 catch 里处理（401/403 会提前 return）
-    btn.textContent='上传到 GitHub'; btn.disabled=false;
+    if(btn.textContent==='上传中...'){
+      btn.textContent='上传到 GitHub'; btn.disabled=false;
+    }
   }
 }
 
-/* 弹出 Token 输入框，返回 token 字符串或空串 */
 function promptToken(){
   return new Promise(function(resolve){
-    var token=prompt(
+    var t=prompt(
       '请输入 GitHub Personal Access Token（需要 repo 权限）\n\n'+
       '获取步骤：\n'+
       '1. 打开 https://github.com/settings/tokens\n'+
@@ -949,11 +987,11 @@ function promptToken(){
       '4. 复制生成的 ghp_ 开头的 Token\n\n'+
       '（Token 会保存在浏览器本地，下次无需重新输入）'
     );
-    if(!token||!token.trim()){ resolve(''); return; }
-    var t=token.trim();
-    localStorage.setItem(GH_TOKEN_KEY,t);
+    if(!t||!t.trim()){ resolve(''); return; }
+    var v=t.trim();
+    localStorage.setItem(GH_TOKEN_KEY,v);
     toast('Token 已保存，下次无需重新输入','success');
-    resolve(t);
+    resolve(v);
   });
 }
 
@@ -1011,22 +1049,72 @@ function importJSON(e){
   e.target.value='';
 }
 
-/* ============ EXCEL EXPORT (TEMPLATE-BASED) ============ */
-function exportExcel(){
+/* ============ EXCEL EXPORT ============ */
+
+/* 下拉菜单开关 */
+function toggleExportDropdown(e){
+  e.stopPropagation();
+  var wrap=document.getElementById('export-dropdown');
+  wrap.classList.toggle('open');
+}
+document.addEventListener('click',function(){
+  var wrap=document.getElementById('export-dropdown');
+  if(wrap) wrap.classList.remove('open');
+});
+
+/* 通用：显示/隐藏进度条 */
+function showBar(msg){
+  var bar=document.getElementById('export-bar');
+  bar.textContent=msg||'正在生成 Excel，请稍候...';
+  bar.classList.add('show');
+  return bar;
+}
+function hideBar(bar,msg,isErr){
+  if(msg) bar.textContent=msg;
+  setTimeout(function(){bar.classList.remove('show')},isErr?4000:2000);
+}
+
+/* ====== 正常数据导出 ====== */
+function exportNormal(){
+  document.getElementById('export-dropdown').classList.remove('open');
   var filtered=getFiltered();
   if(filtered.length===0){toast('当前无数据可导出','warn');return}
-  var bar=document.getElementById('export-bar');bar.classList.add('show');bar.textContent='正在生成 Excel 文件...';
+  var bar=showBar('正在生成 Excel，请稍候...');
   setTimeout(function(){
     try{
       if(typeof ExcelJS==='undefined')throw new Error('ExcelJS 加载失败，请检查网络');
-      doExportTemplate(filtered).catch(function(e){
-        bar.textContent='导出失败：'+e.message;
-        toast('导出失败：'+e.message,'error');
-        setTimeout(function(){bar.classList.remove('show')},4000);
+      doExportNormal(filtered,bar).catch(function(e){
+        hideBar(bar,'Excel 导出失败，请检查数据后重试',true);
+        toast('Excel 导出失败：'+e.message,'error');
       });
-    }catch(e){bar.textContent='导出失败：'+e.message;toast('导出失败：'+e.message,'error');setTimeout(function(){bar.classList.remove('show')},4000)}
+    }catch(e){
+      hideBar(bar,'Excel 导出失败，请检查数据后重试',true);
+      toast('Excel 导出失败：'+e.message,'error');
+    }
   },100);
 }
+
+/* ====== 数据分析导出 ====== */
+function exportAnalysis(){
+  document.getElementById('export-dropdown').classList.remove('open');
+  if(records.length===0){toast('当前无数据可导出','warn');return}
+  var bar=showBar('正在生成复盘分析资料，请稍候...');
+  setTimeout(function(){
+    try{
+      if(typeof ExcelJS==='undefined')throw new Error('ExcelJS 加载失败，请检查网络');
+      doExportAnalysis(records,bar).catch(function(e){
+        hideBar(bar,'Excel 导出失败，请检查数据后重试',true);
+        toast('Excel 导出失败：'+e.message,'error');
+      });
+    }catch(e){
+      hideBar(bar,'Excel 导出失败，请检查数据后重试',true);
+      toast('Excel 导出失败：'+e.message,'error');
+    }
+  },100);
+}
+
+/* ====== 兼容旧调用 ====== */
+function exportExcel(){ exportNormal(); }
 
 function b64ToBuffer(b64){
   var binary=atob(b64);var bytes=new Uint8Array(binary.length);
@@ -1034,21 +1122,11 @@ function b64ToBuffer(b64){
   return bytes.buffer;
 }
 
-function fmtDate(v){
-  if(!v)return '';
-  if(typeof v==='number'){var d=new Date((v-25569)*86400000);return d.getFullYear()+('0'+(d.getMonth()+1)).slice(-2)+('0'+d.getDate()).slice(-2)}
-  var s=String(v).trim();
-  if(/^\d{8}$/.test(s))return s;
-  if(/^\d{4}-\d{2}-\d{2}/.test(s))return s.substring(0,10).replace(/-/g,'');
-  return s;
-}
+async function doExportNormal(recs,bar){
 
-async function doExportTemplate(recs){
-  var bar=document.getElementById('export-bar');
-
-  /* ─── 1. Create fresh workbook (not from template) ─── */
+  /* ─── 1. Create fresh workbook ─── */
   var wb=new ExcelJS.Workbook();
-  var ws=wb.addWorksheet('跟踪表');
+  var ws=wb.addWorksheet('问题跟踪明细');
 
   /* ─── 2. Column widths (A-M) ─── */
   ws.columns=[
@@ -1222,7 +1300,7 @@ async function doExportTemplate(recs){
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
   a.href=url;
-  a.download='套管交付与质量专项改善问题异常跟踪表_'+dateStr+'.xlsx';
+  a.download='套管交付与质量专项改善问题异常跟踪表_正常导出_'+dateStr+'.xlsx';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1231,6 +1309,412 @@ async function doExportTemplate(recs){
   bar.textContent='导出成功！';
   setTimeout(function(){bar.classList.remove('show')},2000);
   toast('Excel 导出成功！共 '+recs.length+' 条','success');
+}
+
+/* ============ SHARED EXCEL HELPERS ============ */
+function fmtDate(v){
+  if(!v)return '';
+  if(typeof v==='number'){var d=new Date((v-25569)*86400000);return d.getFullYear()+('0'+(d.getMonth()+1)).slice(-2)+('0'+d.getDate()).slice(-2)}
+  var s=String(v).trim();
+  if(/^\d{8}$/.test(s))return s;
+  if(/^\d{4}[-/]\d{2}[-/]\d{2}/.test(s))return s.substring(0,10).replace(/[-/]/g,'');
+  return s;
+}
+function parseDate(v){
+  if(!v)return null;
+  if(v instanceof Date)return isNaN(v)?null:v;
+  if(typeof v==='number'){var d=new Date((v-25569)*86400000);return isNaN(d)?null:d}
+  var s=String(v).trim().replace(/[\/]/g,'-');
+  if(/^\d{8}$/.test(s)) s=s.substring(0,4)+'-'+s.substring(4,6)+'-'+s.substring(6,8);
+  var d2=new Date(s);return isNaN(d2)?null:d2;
+}
+function isOverdue(planDate,status){
+  if(status==='已完成')return false;
+  var pd=parseDate(planDate);if(!pd)return false;
+  var today=new Date();today.setHours(0,0,0,0);
+  return pd<today;
+}
+function isOnTime(planDate,actualDate){
+  var pd=parseDate(planDate),ad=parseDate(actualDate);
+  if(!pd||!ad)return '无法判断';
+  return ad<=pd?'是':'否';
+}
+function pct(n,total){return total===0?'0%':(Math.round(n/total*1000)/10)+'%'}
+function mkBorder(){return{top:{style:'thin',color:{argb:'FF000000'}},left:{style:'thin',color:{argb:'FF000000'}},bottom:{style:'thin',color:{argb:'FF000000'}},right:{style:'thin',color:{argb:'FF000000'}}}}
+function mkCenter(){return{vertical:'middle',horizontal:'center',wrapText:true}}
+function mkLeft(){return{vertical:'middle',horizontal:'left',wrapText:true}}
+var S_HEADER_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};
+var S_WHITE_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFFFF'}};
+var S_GREEN_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FF00B050'}};
+var S_RED_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFF0000'}};
+var S_YELLOW_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFFF00'}};
+var S_LIGHT_RED_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFC7CE'}};
+var S_LIGHT_YELLOW_FILL={type:'pattern',pattern:'solid',fgColor:{argb:'FFFFF2CC'}};
+var S_BLACK_FONT={name:'Microsoft YaHei',size:11,color:{argb:'FF000000'}};
+var S_WHITE_FONT={name:'Microsoft YaHei',size:11,color:{argb:'FFFFFFFF'},bold:true};
+var S_TITLE_FONT={name:'Microsoft YaHei',size:14,color:{argb:'FFFFFFFF'},bold:true};
+var S_HEADER_FONT={name:'Microsoft YaHei',size:11,color:{argb:'FFFFFFFF'},bold:true};
+
+function applyCellBase(cell){
+  cell.border=mkBorder();cell.alignment=mkCenter();cell.fill=S_WHITE_FILL;cell.font=S_BLACK_FONT;
+}
+function applyCellHeader(cell){
+  cell.border=mkBorder();cell.alignment=mkCenter();cell.fill=S_HEADER_FILL;cell.font=S_HEADER_FONT;
+}
+function applyStatusColor(cell,status){
+  cell.border=mkBorder();cell.alignment=mkCenter();
+  if(status==='已完成'){cell.fill=S_GREEN_FILL;cell.font=S_WHITE_FONT;}
+  else if(status==='未开始'){cell.fill=S_RED_FILL;cell.font=S_WHITE_FONT;}
+  else if(status==='处理中'){cell.fill=S_YELLOW_FILL;cell.font=S_BLACK_FONT;}
+  else{cell.fill=S_WHITE_FILL;cell.font=S_BLACK_FONT;}
+}
+/* 分组统计 */
+function calcSummary(data){
+  var now=new Date();now.setHours(0,0,0,0);
+  var total=data.length,done=0,inprog=0,notstart=0,other=0,overdue=0;
+  data.forEach(function(r){
+    var s=r.status||'';
+    if(s==='已完成')done++;
+    else if(s==='处理中')inprog++;
+    else if(s==='未开始')notstart++;
+    else other++;
+    if(isOverdue(r.plannedDate,s))overdue++;
+  });
+  return{total:total,done:done,inprog:inprog,notstart:notstart,other:other,
+    overdue:overdue,undone:inprog+notstart+other,
+    doneRate:pct(done,total)};
+}
+function calcByType(data){
+  var map={};
+  data.forEach(function(r){
+    var t=r.problemType||'（未填写）';
+    if(!map[t])map[t]={type:t,total:0,done:0,inprog:0,notstart:0,other:0};
+    map[t].total++;
+    var s=r.status||'';
+    if(s==='已完成')map[t].done++;
+    else if(s==='处理中')map[t].inprog++;
+    else if(s==='未开始')map[t].notstart++;
+    else map[t].other++;
+  });
+  return Object.values(map).sort(function(a,b){return b.total-a.total});
+}
+function calcByOwner(data){
+  var map={};
+  data.forEach(function(r){
+    var o=r.responsible||'（未填写）';
+    if(!map[o])map[o]={owner:o,total:0,done:0,inprog:0,notstart:0,other:0,overdue:0,types:{}};
+    map[o].total++;
+    var s=r.status||'';
+    if(s==='已完成')map[o].done++;
+    else if(s==='处理中')map[o].inprog++;
+    else if(s==='未开始')map[o].notstart++;
+    else map[o].other++;
+    if(isOverdue(r.plannedDate,s))map[o].overdue++;
+    var t=r.problemType||'其他';
+    map[o].types[t]=(map[o].types[t]||0)+1;
+  });
+  return Object.values(map).map(function(o){
+    o.undone=o.inprog+o.notstart+o.other;
+    o.doneRate=pct(o.done,o.total);
+    var mt=Object.keys(o.types).sort(function(a,b){return o.types[b]-o.types[a]})[0]||'';
+    o.mainType=mt;
+    return o;
+  }).sort(function(a,b){return b.undone-a.undone||b.total-a.total});
+}
+/* 下载 workbook */
+async function downloadWb(wb,filename){
+  var buf=await wb.xlsx.writeBuffer();
+  var blob=new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  var url=URL.createObjectURL(blob);
+  var a=document.createElement('a');a.href=url;a.download=filename;
+  document.body.appendChild(a);a.click();
+  document.body.removeChild(a);URL.revokeObjectURL(url);
+}
+/* 添加大标题行（合并A1:ColsN） */
+function addSheetTitle(ws,title,colCount){
+  var endLetter=String.fromCharCode(64+colCount);
+  ws.getRow(1).height=36;
+  ws.mergeCells('A1:'+endLetter+'1');
+  var c=ws.getCell('A1');
+  c.value=title;c.fill=S_HEADER_FILL;c.font=S_TITLE_FONT;
+  c.alignment={vertical:'middle',horizontal:'center',wrapText:true};
+  c.border=mkBorder();
+}
+/* 添加表头行 */
+function addSheetHeaders(ws,rowNum,headers,colWidths){
+  ws.getRow(rowNum).height=30;
+  headers.forEach(function(h,i){
+    var c=ws.getCell(rowNum,i+1);
+    c.value=h;applyCellHeader(c);
+  });
+  ws.views=[{state:'frozen',ySplit:rowNum}];
+  if(colWidths) ws.columns=colWidths.map(function(w){return{width:w}});
+}
+/* 给矩形区域统一设置边框（用于已合并的单元格边缘）*/
+function setBorderRect(ws,r1,c1,r2,c2){
+  for(var r=r1;r<=r2;r++){
+    for(var c=c1;c<=c2;c++){
+      ws.getCell(r,c).border=mkBorder();
+    }
+  }
+}
+
+/* ============ ANALYSIS EXPORT ============ */
+async function doExportAnalysis(data,bar){
+  var wb=new ExcelJS.Workbook();
+  var now=new Date();
+  var today=new Date();today.setHours(0,0,0,0);
+  var dateStr=now.getFullYear()+('0'+(now.getMonth()+1)).slice(-2)+('0'+now.getDate()).slice(-2);
+  var todayStr=dateStr;
+
+  var summary=calcSummary(data);
+  var byType=calcByType(data);
+  var byOwner=calcByOwner(data);
+
+  /* ─── Sheet 1: 复盘总览 ─── */
+  bar.textContent='正在生成 Sheet1：复盘总览...';
+  var ws1=wb.addWorksheet('复盘总览');
+  ws1.columns=[{width:24},{width:20},{width:36}];
+  addSheetTitle(ws1,'套管交付与质量专项改善复盘总览（'+dateStr+'）',3);
+  addSheetHeaders(ws1,2,['指标','数量 / 比例','说明']);
+  var s1rows=[
+    ['问题总数',summary.total,'全部问题数量'],
+    ['已完成',summary.done,'完成情况=已完成'],
+    ['处理中',summary.inprog,'完成情况=处理中'],
+    ['未开始',summary.notstart,'完成情况=未开始'],
+    ['其他未完成',summary.other,'完成情况为空白或其他状态'],
+    ['完成率',summary.doneRate,'已完成数量 / 问题总数'],
+    ['未完成数量',summary.undone,'未开始 + 处理中 + 其他未完成'],
+    ['超期未完成',summary.overdue,'计划完成时间早于今天且未完成']
+  ];
+  s1rows.forEach(function(row,i){
+    var rn=3+i;ws1.getRow(rn).height=26;
+    row.forEach(function(v,ci){
+      var c=ws1.getCell(rn,ci+1);
+      c.value=v;applyCellBase(c);
+      if(ci===0){c.font=Object.assign({},S_BLACK_FONT,{bold:true});}
+      // 超期未完成 > 0 用红色
+      if(ci===1 && row[0]==='超期未完成' && summary.overdue>0){
+        c.fill=S_RED_FILL;c.font=S_WHITE_FONT;
+      }
+    });
+  });
+  // 按类型汇总
+  var typeStart=3+s1rows.length+1;
+  ws1.getRow(typeStart).height=30;
+  ws1.mergeCells('A'+typeStart+':C'+typeStart);
+  var tc=ws1.getCell(typeStart,1);
+  tc.value='按问题类型统计';tc.fill=S_HEADER_FILL;tc.font=S_HEADER_FONT;
+  tc.alignment=mkCenter();tc.border=mkBorder();
+  addSheetHeaders(ws1,typeStart+1,['问题类型','问题数量','占比']);
+  byType.forEach(function(row,i){
+    var rn=typeStart+2+i;ws1.getRow(rn).height=24;
+    [row.type,row.total,pct(row.total,summary.total)].forEach(function(v,ci){
+      var c=ws1.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+    });
+  });
+  // 按责任人汇总
+  var ownStart=typeStart+2+byType.length+1;
+  ws1.getRow(ownStart).height=30;
+  ws1.mergeCells('A'+ownStart+':C'+ownStart);
+  var oc=ws1.getCell(ownStart,1);
+  oc.value='按责任人统计';oc.fill=S_HEADER_FILL;oc.font=S_HEADER_FONT;
+  oc.alignment=mkCenter();oc.border=mkBorder();
+  addSheetHeaders(ws1,ownStart+1,['责任人','负责问题数','完成率']);
+  byOwner.forEach(function(row,i){
+    var rn=ownStart+2+i;ws1.getRow(rn).height=24;
+    [row.owner,row.total,row.doneRate].forEach(function(v,ci){
+      var c=ws1.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+    });
+  });
+  // 按提出人汇总
+  var repMap={};
+  data.forEach(function(r){var k=r.reporter||'（未填写）';repMap[k]=(repMap[k]||0)+1;});
+  var repArr=Object.keys(repMap).map(function(k){return{name:k,cnt:repMap[k]}}).sort(function(a,b){return b.cnt-a.cnt});
+  var repStart=ownStart+2+byOwner.length+1;
+  ws1.getRow(repStart).height=30;
+  ws1.mergeCells('A'+repStart+':C'+repStart);
+  var rc2=ws1.getCell(repStart,1);
+  rc2.value='按问题提出人统计';rc2.fill=S_HEADER_FILL;rc2.font=S_HEADER_FONT;
+  rc2.alignment=mkCenter();rc2.border=mkBorder();
+  addSheetHeaders(ws1,repStart+1,['提出人','提出问题数','占比']);
+  repArr.forEach(function(row,i){
+    var rn=repStart+2+i;ws1.getRow(rn).height=24;
+    [row.name,row.cnt,pct(row.cnt,summary.total)].forEach(function(v,ci){
+      var c=ws1.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+    });
+  });
+
+  /* ─── Sheet 2: 问题类型分析 ─── */
+  bar.textContent='正在生成 Sheet2：问题类型分析...';
+  var ws2=wb.addWorksheet('问题类型分析');
+  ws2.columns=[{width:18},{width:10},{width:10},{width:10},{width:10},{width:12},{width:12},{width:10}];
+  addSheetTitle(ws2,'问题类型分析（'+dateStr+'）',8);
+  addSheetHeaders(ws2,2,['问题类型','问题数量','已完成','处理中','未开始','其他未完成','完成率','占比']);
+  byType.forEach(function(row,i){
+    var rn=3+i;ws2.getRow(rn).height=26;
+    var vals=[row.type,row.total,row.done,row.inprog,row.notstart,row.other,pct(row.done,row.total),pct(row.total,summary.total)];
+    vals.forEach(function(v,ci){
+      var c=ws2.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+      // 最高类型浅黄突出
+      if(i===0){c.fill=S_LIGHT_YELLOW_FILL;}
+    });
+  });
+
+  /* ─── Sheet 3: 责任人分析 ─── */
+  bar.textContent='正在生成 Sheet3：责任人分析...';
+  var ws3=wb.addWorksheet('责任人分析');
+  ws3.columns=[{width:14},{width:10},{width:10},{width:10},{width:10},{width:12},{width:12},{width:12},{width:10},{width:18}];
+  addSheetTitle(ws3,'责任人分析（'+dateStr+'）',10);
+  addSheetHeaders(ws3,2,['责任人','负责总数','已完成','处理中','未开始','其他未完成','未完成','超期未完成','完成率','主要问题类型']);
+  byOwner.forEach(function(row,i){
+    var rn=3+i;ws3.getRow(rn).height=26;
+    var vals=[row.owner,row.total,row.done,row.inprog,row.notstart,row.other,row.undone,row.overdue,row.doneRate,row.mainType];
+    vals.forEach(function(v,ci){
+      var c=ws3.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+      // 超期未完成>0红色
+      if(ci===7 && row.overdue>0){c.fill=S_RED_FILL;c.font=S_WHITE_FONT;}
+    });
+  });
+
+  /* ─── Sheet 4: 未完成问题清单 ─── */
+  bar.textContent='正在生成 Sheet4：未完成问题清单...';
+  var ws4=wb.addWorksheet('未完成问题清单');
+  ws4.columns=[{width:6},{width:12},{width:36},{width:14},{width:30},{width:12},{width:12},{width:14},{width:12},{width:20},{width:10}];
+  addSheetTitle(ws4,'未完成问题清单（'+dateStr+'）',11);
+  addSheetHeaders(ws4,2,['序号','提出人','异常问题描述','问题类型','解决措施','责任人','协助人','计划完成时间','完成情况','备注','是否超期']);
+  var undoneList=data.filter(function(r){return r.status!=='已完成'}).map(function(r){
+    return Object.assign({},r,{_overdue:isOverdue(r.plannedDate,r.status)});
+  }).sort(function(a,b){
+    if(a._overdue!==b._overdue)return a._overdue?-1:1;
+    var pa=parseDate(a.plannedDate),pb=parseDate(b.plannedDate);
+    if(pa&&pb)return pa-pb;return 0;
+  });
+  undoneList.forEach(function(r,i){
+    var rn=3+i;ws4.getRow(rn).height=50;
+    var vals=[i+1,r.reporter||'',r.description||'',r.problemType||'',r.solution||'',
+      r.responsible||'',r.assistant||'',fmtDate(r.plannedDate),r.status||'',r.remarks||'',r._overdue?'是':'否'];
+    vals.forEach(function(v,ci){
+      var c=ws4.getCell(rn,ci+1);c.value=v;
+      if(r._overdue){c.fill=S_LIGHT_RED_FILL;c.font=S_BLACK_FONT;c.border=mkBorder();c.alignment=mkCenter();}
+      else{applyCellBase(c);}
+      // 完成情况单元格独立上色
+      if(ci===8){applyStatusColor(c,r.status||'');}
+      // 是否超期单元格
+      if(ci===10 && r._overdue){c.fill=S_RED_FILL;c.font=S_WHITE_FONT;c.border=mkBorder();c.alignment=mkCenter();}
+    });
+  });
+
+  /* ─── Sheet 5: 已完成问题清单 ─── */
+  bar.textContent='正在生成 Sheet5：已完成问题清单...';
+  var ws5=wb.addWorksheet('已完成问题清单');
+  ws5.columns=[{width:6},{width:12},{width:36},{width:14},{width:30},{width:20},{width:12},{width:14},{width:14},{width:12},{width:20}];
+  addSheetTitle(ws5,'已完成问题清单（'+dateStr+'）',11);
+  addSheetHeaders(ws5,2,['序号','提出人','异常问题描述','问题类型','解决措施','交付物','责任人','计划完成时间','实际完成时间','是否按期完成','备注']);
+  var doneList=data.filter(function(r){return r.status==='已完成'});
+  doneList.forEach(function(r,i){
+    var rn=3+i;ws5.getRow(rn).height=50;
+    var onTime=isOnTime(r.plannedDate,r.actualDate);
+    var vals=[i+1,r.reporter||'',r.description||'',r.problemType||'',r.solution||'',
+      r.deliverable||'',r.responsible||'',fmtDate(r.plannedDate),fmtDate(r.actualDate),onTime,r.remarks||''];
+    vals.forEach(function(v,ci){
+      var c=ws5.getCell(rn,ci+1);c.value=v;applyCellBase(c);
+      if(ci===9 && onTime==='否'){c.fill=S_LIGHT_RED_FILL;c.font=S_BLACK_FONT;c.border=mkBorder();}
+    });
+  });
+
+  /* ─── Sheet 6: 典型问题复盘 ─── */
+  bar.textContent='正在生成 Sheet6：典型问题复盘...';
+  var ws6=wb.addWorksheet('典型问题复盘');
+  ws6.columns=[{width:6},{width:36},{width:14},{width:12},{width:12},{width:14},{width:14},{width:30},{width:20},{width:20},{width:12},{width:14}];
+  addSheetTitle(ws6,'典型问题复盘（'+dateStr+'）',12);
+  addSheetHeaders(ws6,2,['序号','问题描述','问题类型','当前状态','责任人','计划完成时间','实际完成时间','当前卡点/备注','复盘结论','后续动作','行动责任人','截止时间']);
+  var riskKw=['风险','卡点','等待','影响','异常','反复','未解决','缺料','返工','投诉','延误'];
+  var typicalList=data.filter(function(r){
+    if(isOverdue(r.plannedDate,r.status))return true;
+    var note=(r.remarks||'')+(r.description||'');
+    if(riskKw.some(function(kw){return note.indexOf(kw)>-1}))return true;
+    return false;
+  });
+  // 去重（已经被超期条件覆盖的不再被备注关键词重复添加）
+  var typicalIds={};
+  typicalList=typicalList.filter(function(r){
+    if(typicalIds[r.id])return false;typicalIds[r.id]=true;return true;
+  });
+  typicalList.sort(function(a,b){
+    var ao=isOverdue(a.plannedDate,a.status),bo=isOverdue(b.plannedDate,b.status);
+    if(ao!==bo)return ao?-1:1;return 0;
+  });
+  typicalList.forEach(function(r,i){
+    var rn=3+i;ws6.getRow(rn).height=60;
+    var overdue=isOverdue(r.plannedDate,r.status);
+    var vals=[i+1,r.description||'',r.problemType||'',r.status||'',r.responsible||'',
+      fmtDate(r.plannedDate),fmtDate(r.actualDate),r.remarks||'','','','',''];
+    vals.forEach(function(v,ci){
+      var c=ws6.getCell(rn,ci+1);c.value=v;
+      if(overdue){c.fill=S_LIGHT_RED_FILL;c.font=S_BLACK_FONT;c.border=mkBorder();c.alignment=mkCenter();}
+      else{applyCellBase(c);}
+      if(ci===3){applyStatusColor(c,r.status||'');}
+    });
+  });
+
+  /* ─── Sheet 7: 复盘会议纪要 ─── */
+  bar.textContent='正在生成 Sheet7：复盘会议纪要...';
+  var ws7=wb.addWorksheet('复盘会议纪要');
+  ws7.columns=[{width:8},{width:36},{width:14},{width:12},{width:14},{width:20},{width:10},{width:20}];
+  addSheetTitle(ws7,'套管交付与质量专项改善复盘会议纪要',8);
+  // 基本信息区
+  var infoRows=[
+    ['会议主题','套管交付与质量专项改善复盘会'],
+    ['会议时间',''],['会议地点',''],['参会人员',''],['主持人',''],['记录人','']
+  ];
+  infoRows.forEach(function(row,i){
+    var rn=2+i;ws7.getRow(rn).height=30;
+    ws7.mergeCells('B'+rn+':H'+rn);
+    var c1=ws7.getCell(rn,1),c2=ws7.getCell(rn,2);
+    c1.value=row[0];c1.font=Object.assign({},S_BLACK_FONT,{bold:true});c1.border=mkBorder();c1.alignment=mkCenter();c1.fill=S_LIGHT_YELLOW_FILL;
+    c2.value=row[1];c2.font=S_BLACK_FONT;c2.border=mkBorder();c2.alignment=mkLeft();
+  });
+  // 讨论区块
+  var blocks=['本期问题整体情况','主要异常问题','原因分析','改善措施','未关闭事项','需要协调资源','下次跟进时间'];
+  var blockStart=8;
+  blocks.forEach(function(title,i){
+    var rn=blockStart+i*3;
+    ws7.getRow(rn).height=28;
+    ws7.mergeCells('A'+rn+':H'+rn);
+    var ct=ws7.getCell(rn,1);
+    ct.value=(i+1)+'. '+title;ct.fill=S_LIGHT_YELLOW_FILL;
+    ct.font=Object.assign({},S_BLACK_FONT,{bold:true});ct.border=mkBorder();ct.alignment=mkLeft();
+    for(var rb=rn+1;rb<=rn+2;rb++){
+      ws7.getRow(rb).height=30;
+      ws7.mergeCells('A'+rb+':H'+rb);
+      var cb=ws7.getCell(rb,1);
+      cb.value='';cb.fill=S_WHITE_FILL;cb.font=S_BLACK_FONT;cb.border=mkBorder();cb.alignment=mkLeft();
+    }
+  });
+  // 行动项表格
+  var actionStart=blockStart+blocks.length*3+1;
+  ws7.getRow(actionStart).height=30;
+  ws7.mergeCells('A'+actionStart+':H'+actionStart);
+  var actTitle=ws7.getCell(actionStart,1);
+  actTitle.value='行动项跟踪';actTitle.fill=S_HEADER_FILL;actTitle.font=S_HEADER_FONT;
+  actTitle.alignment=mkCenter();actTitle.border=mkBorder();
+  addSheetHeaders(ws7,actionStart+1,['序号','行动项','责任人','协助人','截止时间','输出物','状态','备注']);
+  for(var ak=0;ak<8;ak++){
+    var arn=actionStart+2+ak;
+    ws7.getRow(arn).height=30;
+    for(var aCol=1;aCol<=8;aCol++){
+      var ac=ws7.getCell(arn,aCol);
+      ac.value='';applyCellBase(ac);
+    }
+    ws7.getCell(arn,1).value=ak+1;
+  }
+
+  /* ─── 下载 ─── */
+  bar.textContent='正在生成下载文件...';
+  await downloadWb(wb,'套管交付与质量专项改善复盘分析资料_'+dateStr+'.xlsx');
+  hideBar(bar,'导出成功！',false);
+  toast('复盘分析资料导出成功！共 '+data.length+' 条数据，7个 Sheet','success');
 }
 
 /* ============ HELPERS ============ */
