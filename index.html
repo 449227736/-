@@ -104,6 +104,31 @@ body{
 .toolbar select{min-width:120px}
 .toolbar .spacer{flex:1}
 
+/* ====== DATE RANGE BAR ====== */
+.date-range-bar{
+  background:var(--surface);border-radius:var(--radius);padding:12px 20px;
+  box-shadow:var(--shadow);margin-bottom:16px;
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  border-left:3px solid var(--primary);
+}
+.dr-label{font-size:13px;font-weight:500;color:var(--text)}
+.dr-sep{font-size:13px;color:var(--text2)}
+.dr-divider{color:var(--border);font-size:13px}
+.date-range-bar input[type="date"]{
+  padding:6px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);
+  font-size:13px;outline:none;font-family:inherit;background:var(--bg);color:var(--text);width:140px;
+}
+.date-range-bar input[type="date"]:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,110,247,.1);background:#fff}
+.dr-quick{
+  background:var(--bg);border:1px solid var(--border);color:var(--text2);
+  padding:5px 12px;border-radius:var(--radius-sm);font-size:12px;cursor:pointer;
+  transition:var(--transition);
+}
+.dr-quick:hover{border-color:var(--primary);color:var(--primary);background:#f0f4ff}
+.dr-overdue{background:#fef2f2;border:1px solid #fca5a5;color:#dc2626}
+.dr-overdue:hover{background:#fee2e2;border-color:#dc2626}
+.dr-result{font-size:12px;color:var(--primary);font-weight:500}
+
 /* ====== BUTTONS ====== */
 .btn{
   display:inline-flex;align-items:center;gap:4px;padding:7px 16px;
@@ -313,6 +338,9 @@ body{
   .toolbar input,.toolbar select{width:100%}
   .app-header{flex-direction:column;height:auto;padding:12px 16px;gap:10px}
   .stats-row{grid-template-columns:repeat(2,1fr)}
+  .date-range-bar{flex-direction:column;align-items:stretch}
+  .date-range-bar input[type="date"]{width:100%}
+  .dr-divider{display:none}
 }
 
 /* ====== DROPDOWN EXPORT BUTTON ====== */
@@ -419,6 +447,22 @@ body{
       <span class="spacer"></span>
       <span style="font-size:12px;color:var(--text3)" id="filter-count"></span>
       <button class="btn btn-ghost btn-sm" onclick="clearFilters()">清空</button>
+    </div>
+
+    <!-- 计划完成时间范围筛选 -->
+    <div class="date-range-bar" id="date-range-bar">
+      <span class="dr-label">计划完成时间：</span>
+      <input type="date" id="dr-start" onchange="applyDateRange()">
+      <span class="dr-sep">至</span>
+      <input type="date" id="dr-end" onchange="applyDateRange()">
+      <button class="btn btn-primary btn-sm" onclick="applyDateRange()">查询</button>
+      <button class="btn btn-ghost btn-sm" onclick="resetDateRange()">重置</button>
+      <span class="dr-divider">|</span>
+      <button class="btn btn-sm dr-quick" onclick="quickRange('week')">本周</button>
+      <button class="btn btn-sm dr-quick" onclick="quickRange('nextweek')">下周</button>
+      <button class="btn btn-sm dr-quick" onclick="quickRange('month')">本月</button>
+      <button class="btn btn-sm dr-overdue" onclick="quickRange('overdue')">逾期未完成</button>
+      <span class="dr-result" id="dr-result"></span>
     </div>
 
     <div class="export-bar" id="export-bar">正在生成 Excel 文件，请稍候...</div>
@@ -721,7 +765,9 @@ function getFiltered(){
   var person=(document.getElementById('f-person').value||'').toLowerCase();
   var dateField=document.getElementById('f-date-field').value;
   var datePick=document.getElementById('f-date-pick').value;
-  return records.filter(function(r){
+  var isOverdue=isOverdueMode();
+  var todayStr=(function(){var d=new Date();return d.getFullYear()+'-'+('0'+(d.getMonth()+1)).slice(-2)+'-'+('0'+d.getDate()).slice(-2)})();
+  var result=records.filter(function(r){
     if(kw){var m=false;['reporter','description','problemType','solution','deliverable','responsible','assistant','remarks'].forEach(function(f){if(r[f]&&String(r[f]).toLowerCase().indexOf(kw)>=0)m=true});if(!m)return false}
     if(ptype&&r.problemType!==ptype)return false;
     if(st&&r.status!==st)return false;
@@ -731,8 +777,31 @@ function getFiltered(){
       if(dateField!=='createdAt'&&/^\d{8}$/.test(dv))dv=dv.substring(0,4)+'-'+dv.substring(4,6)+'-'+dv.substring(6,8);
       if(dv!==datePick)return false;
     }
+    /* 逾期筛选：计划完成时间 < 今天 且 不是已完成 */
+    if(isOverdue){
+      var pd=parsePlanDate(r.plannedDate);
+      if(!pd||pd>=todayStr||r.status==='已完成')return false;
+    }
+    /* 日期范围筛选 */
+    if(!isOverdue&&!matchDateRange(r))return false;
     return true;
   });
+  /* 如果有日期范围筛选或逾期筛选，按计划完成时间排序 */
+  var hasDateFilter=isOverdueMode()||document.getElementById('dr-start').value||document.getElementById('dr-end').value;
+  if(hasDateFilter){
+    var statusOrder={'未开始':0,'处理中':1,'已完成':2,'已关闭':3,'延期':4};
+    result.sort(function(a,b){
+      var da=parsePlanDate(a.plannedDate)||'9999-12-31';
+      var db=parsePlanDate(b.plannedDate)||'9999-12-31';
+      if(da<db)return -1;if(da>db)return 1;
+      var sa=statusOrder[a.status]!==undefined?statusOrder[a.status]:9;
+      var sb=statusOrder[b.status]!==undefined?statusOrder[b.status]:9;
+      return sa-sb;
+    });
+  }
+  /* 更新结果提示 */
+  updateDateRangeLabel(result.length,isOverdue);
+  return result;
 }
 function onDatePick(){
   var df=document.getElementById('f-date-field');
@@ -747,6 +816,125 @@ function statFilter(status){
 function clearFilters(){
   ['f-keyword','f-type','f-status','f-person','f-date-field','f-date-pick'].forEach(function(id){document.getElementById(id).value=''});
   currentPage=1;renderList();
+}
+
+/* ============ DATE RANGE FILTER ============ */
+/* 日期解析：兼容多种格式 → 'YYYY-MM-DD' 字符串，失败返回 null */
+function parsePlanDate(v){
+  if(!v)return null;
+  if(v instanceof Date&&!isNaN(v))return v.getFullYear()+'-'+('0'+(v.getMonth()+1)).slice(-2)+'-'+('0'+v.getDate()).slice(-2);
+  var s=String(v).trim();
+  if(!s)return null;
+  /* YYYYMMDD */
+  if(/^\d{8}$/.test(s))return s.substring(0,4)+'-'+s.substring(4,6)+'-'+s.substring(6,8);
+  /* YYYY-MM-DD / YYYY/MM/DD / YYYY.MM.DD */
+  var m=s.match(/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/);
+  if(m)return m[1]+'-'+('0'+m[2]).slice(-2)+'-'+('0'+m[3]).slice(-2);
+  return null;
+}
+
+/* 获取日期范围筛选状态 */
+function getDateRangeState(){
+  var startEl=document.getElementById('dr-start');
+  var endEl=document.getElementById('dr-end');
+  var resultEl=document.getElementById('dr-result');
+  var start=startEl.value||'';
+  var end=endEl.value||'';
+  return{start:start,end:end,resultEl:resultEl};
+}
+
+/* 更新筛选结果提示文字 */
+function updateDateRangeLabel(count, isOverdue){
+  var s=getDateRangeState();
+  var txt='';
+  if(isOverdue){txt='当前筛选：逾期未完成事项，共 '+count+' 条'}
+  else if(s.start&&s.end){txt='当前筛选：计划完成时间 '+s.start+' 至 '+s.end+'，共 '+count+' 条'}
+  else if(s.start){txt='当前筛选：计划完成时间不早于 '+s.start+'，共 '+count+' 条'}
+  else if(s.end){txt='当前筛选：计划完成时间不晚于 '+s.end+'，共 '+count+' 条'}
+  else{txt=''}
+  if(count===0&&(s.start||s.end||isOverdue))txt+=' (暂无匹配数据)';
+  s.resultEl.textContent=txt;
+}
+
+/* 判断记录是否在日期范围内 */
+function matchDateRange(r){
+  var s=getDateRangeState();
+  if(!s.start&&!s.end)return true;
+  var pd=parsePlanDate(r.plannedDate);
+  if(!pd)return false;
+  if(s.start&&pd<s.start)return false;
+  if(s.end&&pd>s.end)return false;
+  return true;
+}
+
+/* 日期范围查询 */
+function applyDateRange(){
+  var s=getDateRangeState();
+  if(s.start&&s.end&&s.start>s.end){
+    toast('开始日期不能晚于结束日期','warn');
+    return;
+  }
+  /* 清除逾期标记 */
+  document.getElementById('date-range-bar').classList.remove('overdue-active');
+  applyFilters();
+}
+
+/* 重置日期范围 */
+function resetDateRange(){
+  document.getElementById('dr-start').value='';
+  document.getElementById('dr-end').value='';
+  document.getElementById('date-range-bar').classList.remove('overdue-active');
+  applyFilters();
+}
+
+/* 快捷按钮 */
+function quickRange(type){
+  var today=new Date();var y=today.getFullYear(),m=today.getMonth(),d=today.getDate();
+  var dayOfWeek=today.getDay()||7; /* 周一=1...周日=7 */
+  function pad(n){return n<10?'0'+n:''+n}
+  function fmtDate(dt){return dt.getFullYear()+'-'+pad(dt.getMonth()+1)+'-'+pad(dt.getDate())}
+  if(type==='week'){
+    var mon=new Date(y,m,d-dayOfWeek+1);
+    var sun=new Date(y,m,d-dayOfWeek+7);
+    document.getElementById('dr-start').value=fmtDate(mon);
+    document.getElementById('dr-end').value=fmtDate(sun);
+    document.getElementById('date-range-bar').classList.remove('overdue-active');
+    applyFilters();
+  }else if(type==='nextweek'){
+    var nextMon=new Date(y,m,d-dayOfWeek+8);
+    var nextSun=new Date(y,m,d-dayOfWeek+14);
+    document.getElementById('dr-start').value=fmtDate(nextMon);
+    document.getElementById('dr-end').value=fmtDate(nextSun);
+    document.getElementById('date-range-bar').classList.remove('overdue-active');
+    applyFilters();
+  }else if(type==='month'){
+    var first=new Date(y,m,1);
+    var last=new Date(y,m+1,0);
+    document.getElementById('dr-start').value=fmtDate(first);
+    document.getElementById('dr-end').value=fmtDate(last);
+    document.getElementById('date-range-bar').classList.remove('overdue-active');
+    applyFilters();
+  }else if(type==='overdue'){
+    document.getElementById('dr-start').value='';
+    document.getElementById('dr-end').value='';
+    document.getElementById('date-range-bar').classList.add('overdue-active');
+    applyFilters();
+  }
+}
+
+/* 判断当前是否为逾期筛选模式 */
+function isOverdueMode(){
+  return document.getElementById('date-range-bar').classList.contains('overdue-active');
+}
+
+/* 获取文件名中的日期范围后缀 */
+function getDateRangeSuffix(){
+  var s=getDateRangeState();
+  if(isOverdueMode())return '_逾期未完成';
+  if(s.start&&s.end)return '_计划完成时间'+s.start.replace(/-/g,'')+'至'+s.end.replace(/-/g,'');
+  if(s.start)return '_计划完成时间不早于'+s.start.replace(/-/g,'');
+  if(s.end)return '_计划完成时间不晚于'+s.end.replace(/-/g,'');
+  return '';
 }
 
 function renderList(){
@@ -1096,12 +1284,13 @@ function exportNormal(){
 /* ====== 数据分析导出 ====== */
 function exportAnalysis(){
   document.getElementById('export-dropdown').classList.remove('open');
-  if(records.length===0){toast('当前无数据可导出','warn');return}
+  var filtered=getFiltered();
+  if(filtered.length===0){toast('当前无数据可导出','warn');return}
   var bar=showBar('正在生成复盘分析资料，请稍候...');
   setTimeout(function(){
     try{
       if(typeof ExcelJS==='undefined')throw new Error('ExcelJS 加载失败，请检查网络');
-      doExportAnalysis(records,bar).catch(function(e){
+      doExportAnalysis(filtered,bar).catch(function(e){
         hideBar(bar,'Excel 导出失败，请检查数据后重试',true);
         toast('Excel 导出失败：'+e.message,'error');
       });
@@ -1296,7 +1485,7 @@ async function doExportNormal(recs,bar){
   var url=URL.createObjectURL(blob);
   var a=document.createElement('a');
   a.href=url;
-  a.download='套管交付与质量专项改善问题异常跟踪表_正常导出_'+dateStr+'.xlsx';
+  a.download='套管交付与质量专项改善问题异常跟踪表_正常导出_'+dateStr+getDateRangeSuffix()+'.xlsx';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1769,7 +1958,7 @@ async function doExportAnalysis(data,bar){
 
   /* ─── 下载 ─── */
   bar.textContent='正在生成下载文件...';
-  await downloadWb(wb,'套管交付与质量专项改善复盘分析资料_'+dateStr+'.xlsx');
+  await downloadWb(wb,'套管交付与质量专项改善复盘分析资料_'+dateStr+getDateRangeSuffix()+'.xlsx');
   hideBar(bar,'导出成功！',false);
   toast('复盘分析资料导出成功！共 '+data.length+' 条数据，7个 Sheet','success');
 }
